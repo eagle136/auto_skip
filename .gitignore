@@ -22,6 +22,10 @@ keystore/
 *.keystore
 *.p12
 
+# 例外：仓库内的一次性公开签名。密钥与口令都是公开的随机值，不构成任何身份，只为让
+# clone 下来的人能直接出包。真实发布走 tools/make_release.py，每次现生成新密钥。
+!signing/open-release.jks
+
 # ===== 机器相关 =====
 local.properties
 
