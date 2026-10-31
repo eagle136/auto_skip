@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">蹦一蹦</string>
+    <string name="service_label">蹦一蹦</string>
+    <string name="a11y_description">读取界面节点，在切换应用后的时间窗口内匹配关键词或坐标并点击对应按钮。</string>
+    <string name="fg_channel">前台服务</string>
+    <string name="fg_message">蹦一蹦正在运行</string>
+</resources>

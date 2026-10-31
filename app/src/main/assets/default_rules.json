@@ -1,0 +1,905 @@
+{
+ "rules": {
+  "com.huawei.android.totemweather": {
+   "click_way": 1
+  },
+  "com.huawei.hwvplayer.youku": {
+   "click_way": 1
+  },
+  "com.huawei.hwireader": {
+   "click_way": 1
+  },
+  "com.android.mediacenter": {
+   "click_way": 1
+  },
+  "com.huawei.android.thememanager": {
+   "click_way": 1
+  },
+  "com.huawei.music": {
+   "click_way": 1
+  },
+  "com.huawei.himovie": {
+   "click_way": 1
+  },
+  "com.huawei.android.FMRadio": {
+   "click_way": 1
+  },
+  "com.huawei.health": {
+   "click_way": 1
+  },
+  "com.huawei.browser": {
+   "click_way": 1
+  },
+  "com.dongqiudi.news": {
+   "click_way": 1
+  },
+  "com.drcuiyutao.babyhealth": {
+   "click_way": 1,
+   "delay": 400,
+   "keywords_append": [
+    "splash_progressbar"
+   ]
+  },
+  "com.caing.news": {
+   "click_way": 0
+  },
+  "com.dewmobile.kuaiya": {
+   "click_way": 1
+  },
+  "cn.wps.moffice_eng": {
+   "click_way": 0
+  },
+  "com.cat.book": {
+   "click_way": 0
+  },
+  "com.lc.coretalk.yyn": {
+   "click_way": 1
+  },
+  "com.xmcy.hykb": {
+   "click_way": 1
+  },
+  "com.huading.gaokao": {
+   "click_way": 0
+  },
+  "com.xwind.network": {
+   "click_way": 0
+  },
+  "com.dm.metro": {
+   "reverse_traversal": true,
+   "node_whitelist": [
+    "skipLayoutGroup"
+   ]
+  },
+  "com.youdao.dict": {
+   "reverse_traversal": true,
+   "node_whitelist": [
+    "ad_skip"
+   ]
+  },
+  "dxwt.questionnaire.ui": {
+   "reverse_traversal": true,
+   "keywords_append": [
+    "关闭",
+    "關閉"
+   ]
+  },
+  "com.huodao.hdphone": {
+   "reverse_traversal": true,
+   "node_whitelist": [
+    "tv_skip_hint",
+    "ll_skip_hint"
+   ]
+  },
+  "com.sinyee.babybus.recommendapp": {
+   "reverse_traversal": true,
+   "node_whitelist": [
+    "ad_skip_tv_second"
+   ]
+  },
+  "com.zuoyou.center": {
+   "reverse_traversal": true,
+   "node_whitelist": [
+    "skip_view_layout"
+   ]
+  },
+  "gov.pianzong.androidnga": {
+   "reverse_traversal": true,
+   "node_whitelist": [
+    "rl_skiplayout",
+    "tv_test_3"
+   ]
+  },
+  "com.dangdang.reader": {
+   "reverse_traversal": true,
+   "node_whitelist": [
+    "start_page_skip_iv"
+   ]
+  },
+  "com.north.xstt": {
+   "reverse_traversal": true,
+   "node_whitelist": [
+    "tvCountdown"
+   ]
+  },
+  "com.wm.dmall": {
+   "reverse_traversal": true
+  },
+  "com.sf.activity": {
+   "reverse_traversal": true,
+   "click_way": 1
+  },
+  "com.Kingdee.Express": {
+   "reverse_traversal": true
+  },
+  "cn.cntv": {
+   "filter_invisible_nodes": true
+  },
+  "com.android.dazhihui": {
+   "reverse_traversal": true
+  },
+  "com.ygkj.chelaile.standard": {
+   "reverse_traversal": true
+  },
+  "com.example.mposstandard": {
+   "delay": 128
+  },
+  "com.fengshows.video": {
+   "delay": 512
+  },
+  "com.taptap": {
+   "delay": 512
+  },
+  "com.miui.player": {
+   "DOCC": [
+    [
+     "0&1",
+     "1&1",
+     "2&1",
+     "1&1",
+     "2&1",
+     "1&1",
+     "1&7",
+     "7&0"
+    ]
+   ]
+  },
+  "com.qq.qcloud": {
+   "DOCC": [
+    [
+     "0&2",
+     "1&1",
+     "2&2",
+     "2&1",
+     "1&5",
+     "5&0"
+    ],
+    [
+     "0&2",
+     "1&1",
+     "2&2",
+     "2&1",
+     "1&4",
+     "4&2",
+     "2&0"
+    ]
+   ]
+  },
+  "com.tencent.radio": {
+   "DOCC": [
+    [
+     "0&1",
+     "1&1",
+     "2&1",
+     "1&1",
+     "2&1",
+     "1&1",
+     "1&3",
+     "3&0"
+    ]
+   ]
+  },
+  "com.nfyg.hsbb": {
+   "DOCC": [
+    [
+     "0&1",
+     "1&1",
+     "2&1",
+     "1&1",
+     "2&1",
+     "1&1",
+     "1&1",
+     "1&3",
+     "1&3",
+     "3&0"
+    ]
+   ]
+  },
+  "com.cctv.yangshipin.app.androidp": {
+   "node_whitelist": [
+    "ll_skip_to_detail"
+   ]
+  },
+  "com.eastmoney.android.fund": {
+   "node_whitelist": [
+    "f_skip_btn_click",
+    "f_skip_text"
+   ],
+   "reverse_traversal": true
+  },
+  "com.MobileTicket": {
+   "node_whitelist": [
+    "fl_skip_wrong"
+   ]
+  },
+  "com.iflytek.vflynote": {
+   "node_whitelist": [
+    "ll_skip_to_detail"
+   ]
+  },
+  "com.qq.reader": {
+   "node_whitelist": [
+    "skip_tips_ap"
+   ]
+  },
+  "com.wochacha": {
+   "node_whitelist": [
+    "skipView"
+   ]
+  },
+  "com.dianshijia.tvlive": {
+   "node_whitelist": [
+    "splash_countdown"
+   ]
+  },
+  "com.cubic.autohome": {
+   "node_whitelist": [
+    "skip_layout"
+   ]
+  },
+  "com.chebada": {
+   "node_whitelist": [
+    "skipGroup"
+   ]
+  },
+  "com.jdd.motorfans": {
+   "node_whitelist": [
+    "skip_parent_view"
+   ]
+  },
+  "com.sec.android.app.shealth": {
+   "node_whitelist": [
+    "skip_textview",
+    "skip_text"
+   ]
+  },
+  "de.danoeh.antennapod": {
+   "node_whitelist": [
+    "butSkip"
+   ]
+  },
+  "com.ximalaya.ting.lite": {
+   "node_whitelist": [
+    "host_gdt_real_skip_container"
+   ]
+  },
+  "com.qidian.QDReader": {
+   "node_whitelist": [
+    "tvSkip"
+   ]
+  },
+  "com.ct.client": {
+   "node_whitelist": [
+    "bt_skip"
+   ]
+  },
+  "com.blink.academy.nomo": {
+   "node_whitelist": [
+    "signin_ll_skip",
+    "skip_ll",
+    "signin_tv_skip"
+   ]
+  },
+  "com.when.coco": {
+   "node_whitelist": [
+    "v_other_ad_skip"
+   ]
+  },
+  "com.wallstreetcn.news": {
+   "keywords_append": [
+    "iv_jump"
+   ]
+  },
+  "com.mm.android.lc": {
+   "keywords_append": [
+    "advert_countdown_view"
+   ]
+  },
+  "com.subuy.ui": {
+   "keywords_append": [
+    "cancel_tv_crossscreen"
+   ]
+  },
+  "com.tcps.xiangyangtravel": {
+   "keywords_append": [
+    "ad_count_view"
+   ]
+  },
+  "com.ifeng.fhdt": {
+   "keywords_append": [
+    "start_page_countdown_view"
+   ]
+  },
+  "com.houdask.app": {
+   "keywords_append": [
+    "splash_tv"
+   ]
+  },
+  "me.zhouzhuo810.zznote": {
+   "keywords_append": [
+    "btn_next_1"
+   ]
+  },
+  "com.fufu.cloud": {
+   "keywords_append": [
+    "关闭广告",
+    "關閉廣告"
+   ]
+  },
+  "com.iyuba.daily": {
+   "keywords_append": [
+    "progressBar"
+   ]
+  },
+  "com.c114.c114__android": {
+   "keywords_append": [
+    "countDownView"
+   ]
+  },
+  "com.longshine.nanwang.electric.charge": {
+   "keywords_append": [
+    "tvProgress"
+   ]
+  },
+  "com.cankaoxiaoxi.app1": {
+   "keywords_append": [
+    "roundProgressBar"
+   ]
+  },
+  "com.lanjiyin.lanjiyin": {
+   "keywords_append": [
+    "剩余"
+   ]
+  },
+  "com.taobao.litetao": {
+   "keywords_append": [
+    "还剩"
+   ]
+  },
+  "com.sjhl.visionlive": {
+   "keywords_append": [
+    "splash_adv_ship"
+   ]
+  },
+  "com.nineteenlou.nineteenlou": {
+   "keywords_append": [
+    "jump"
+   ]
+  },
+  "com.zhaopin.social": {
+   "keywords_append": [
+    "cdp_view"
+   ]
+  },
+  "com.qihoo.browser": {
+   "keywords_append": [
+    "关闭",
+    "關閉"
+   ]
+  },
+  "me.tangke.gamecores": {
+   "keywords_append": [
+    "关闭",
+    "關閉"
+   ]
+  },
+  "com.hbrb.jiyun": {
+   "keywords_append": [
+    "donut_progress"
+   ]
+  },
+  "com.chinarainbow.tft": {
+   "keywords_append": [
+    "ad_count_view"
+   ]
+  },
+  "com.dxy.gaia": {
+   "keywords_append": [
+    "iv_ad_jump_splash"
+   ]
+  },
+  "cn.cntvnews": {
+   "keywords_append": [
+    "ib_toMain"
+   ]
+  },
+  "com.cmbchina.ccd.pluto.cmbActivity": {
+   "keywords_append": [
+    "img_cancel"
+   ]
+  },
+  "com.smile.gifmaker": {
+   "keywords_append": [
+    "我知道了"
+   ],
+   "filter_default": false,
+   "reverse_traversal": true
+  },
+  "com.kuaishou.nebula": {
+   "keywords_append": [
+    "我知道了"
+   ],
+   "filter_default": false,
+   "reverse_traversal": true
+  },
+  "com.liba.android": {
+   "keywords_append": [
+    "跳转",
+    "跳轉"
+   ]
+  },
+  "com.iflytek.inputmethod": {
+   "keywords_append": [
+    "ad_cancel_relative_layout"
+   ]
+  },
+  "com.jingcai.apps.qualitydev": {
+   "keywords_append": [
+    "进入到梦"
+   ]
+  },
+  "cn.samsclub.app": {
+   "keywords_append": [
+    "advertising_tv"
+   ]
+  },
+  "com.chan.cwallpaper": {
+   "keywords_append": [
+    "activate_button"
+   ]
+  },
+  "com.cmstop.shaoxing": {
+   "keywords_append": [
+    "roundProgressBar"
+   ]
+  },
+  "com.kuangxiangciweimao.novel": {
+   "keywords_append": [
+    "mTasksView"
+   ]
+  },
+  "cn.damai": {
+   "keywords_append": [
+    "homepage_advert_pb"
+   ]
+  },
+  "com.zhongduomei.rrmj.society": {
+   "keywords_append": [
+    "view_count_shake",
+    "view_count"
+   ]
+  },
+  "cn.com.cmbc.newmbank": {
+   "keywords_append": [
+    "view_count_down"
+   ]
+  },
+  "com.wisdom.dzapp": {
+   "keywords_append": [
+    "launch_jump"
+   ]
+  },
+  "com.blackpearl.kangeqiu11": {
+   "keywords_append": [
+    "tv_splash_countdown"
+   ]
+  },
+  "com.novel.du": {
+   "keywords_append": [
+    "welcome_tasksview"
+   ]
+  },
+  "com.zhejiangdaily": {
+   "keywords_append": [
+    "splash_circle_progress"
+   ]
+  },
+  "com.czx.axbapp": {
+   "keywords_append": [
+    "btn_jump"
+   ]
+  },
+  "com.sony.store.china": {
+   "keywords_append": [
+    "进入",
+    "進入"
+   ]
+  },
+  "com.achievo.vipshop": {
+   "keywords_append": [
+    "adv_countdown"
+   ]
+  },
+  "com.sohu.newsclient": {
+   "keywords_append": [
+    "scad_splash_progress"
+   ]
+  },
+  "tv.tvguo.androidphone": {
+   "keywords_append": [
+    "qy_splash_countdown"
+   ]
+  },
+  "com.lianjia.beike": {
+   "keywords_append": [
+    "tv_jump"
+   ]
+  },
+  "com.tencent.docs": {
+   "keywords_append": [
+    "tv_gdt_ad_text"
+   ]
+  },
+  "com.jx.cmcc.ict.ibelieve": {
+   "keywords_append": [
+    "b5o"
+   ]
+  },
+  "macao.taxi.passager": {
+   "keywords_append": [
+    "tv_count_down"
+   ]
+  },
+  "com.vistastory.news": {
+   "keywords_append": [
+    "pass_btn"
+   ]
+  },
+  "cn.com.zjol": {
+   "keywords_append": [
+    "splash_circle_progress"
+   ]
+  },
+  "com.tvbc.maiduidui": {
+   "keywords_append": [
+    "ubix_ctdv"
+   ]
+  },
+  "com.fusionmedia.investing": {
+   "keywords": [
+    "close-button-icon",
+    "关闭",
+    "關閉"
+   ]
+  },
+  "com.crypto.currency": {
+   "keywords": [
+    "close-button-icon",
+    "关闭",
+    "關閉"
+   ]
+  },
+  "periodtracker.pregnancy.ovulationtracker": {
+   "keywords": [
+    "close-button-icon",
+    "关闭",
+    "關閉"
+   ]
+  },
+  "com.doc360.client": {
+   "node_whitelist": [
+    "tv_close_vip"
+   ],
+   "keywords_append": [
+    "tv_close"
+   ]
+  },
+  "com.jieyi.citycomm.jilin": {
+   "node_whitelist": [
+    "id_interaction_skip_text"
+   ],
+   "popup_rules": [
+    {
+     "id": "id_interaction_skip_text",
+     "action": "iv_close"
+    }
+   ]
+  },
+  "com.tencent.mtt": {
+   "DOCC": [
+    [
+     "0&1",
+     "1&1",
+     "2&1",
+     "1&1",
+     "1&3",
+     "3&0"
+    ]
+   ],
+   "node_whitelist": [
+    "white_tv_title",
+    "third_web_search_title"
+   ],
+   "max_desc_length": 0
+  },
+  "com.kingdee.zhihuiji": {
+   "keywords_append": [
+    "关闭",
+    "關閉"
+   ],
+   "filter_young_popups": true
+  },
+  "com.qiyi.video": {
+   "keywords_append": [
+    "关闭",
+    "關閉"
+   ],
+   "filter_young_popups": true
+  },
+  "com.qiyi.video.lite": {
+   "keywords_append": [
+    "关闭",
+    "關閉"
+   ],
+   "filter_young_popups": true
+  },
+  "com.hunantv.imgo.activity": {
+   "keywords_append": [
+    "circleProgressView"
+   ],
+   "filter_young_popups": true
+  },
+  "air.tv.douyu.android": {
+   "clicks": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "filter_young_popups": true
+  },
+  "tv.danmaku.bili": {
+   "filter_young_popups": true
+  },
+  "com.youku.phone": {
+   "filter_young_popups": true
+  },
+  "com.duowan.kiwi": {
+   "filter_young_popups": true
+  },
+  "com.ss.android.ugc.aweme": {
+   "filter_young_popups": true
+  },
+  "com.tencent.qqlive": {
+   "filter_young_popups": true
+  },
+  "com.tencent.weishi": {
+   "filter_young_popups": true,
+   "filter_collection_nodes": false
+  },
+  "com.myzaker.ZAKER_Phone": {
+   "popup_rules": [
+    {
+     "id": "cover_pic",
+     "action": "GLOBAL_ACTION_BACK"
+    }
+   ]
+  },
+  "cese3.OA": {
+   "filter_collection_nodes": false
+  },
+  "cn.com.yunma.school.app": {
+   "filter_collection_nodes": false
+  },
+  "com.qiangqu.sjlh": {
+   "filter_collection_nodes": false
+  },
+  "com.qinsilk.app": {
+   "filter_collection_nodes": false
+  },
+  "com.neusoft.app.beijingdaily.phone": {
+   "filter_collection_nodes": false
+  },
+  "com.generalichina.ePolicy": {
+   "filter_collection_nodes": false
+  },
+  "com.careate.qyi": {
+   "filter_collection_nodes": false,
+   "timeout": 10000
+  },
+  "com.byted.pangle": {
+   "filter_collection_nodes": false
+  },
+  "uni.UNI7489B18": {
+   "filter_collection_nodes": false
+  },
+  "com.sakura.yhdm": {
+   "try_times": 10
+  },
+  "com.cssq.key": {
+   "try_times": 30
+  },
+  "com.naver.linewebtoon.cn": {
+   "try_times": 20
+  },
+  "cn.dict.android.pro": {
+   "try_times": 10
+  },
+  "com.xiaofeiji.app.disk": {
+   "try_times": 30
+  },
+  "com.leiting.lt100": {
+   "timeout": 15000
+  },
+  "com.mukapp.genshintool": {
+   "max_text_length": 14
+  },
+  "com.wondertek.miguaikan": {
+   "max_text_length": 9
+  },
+  "com.donghaisc": {
+   "clicks": [
+    0,
+    0,
+    1
+   ]
+  },
+  "com.cmcc.cmvideo": {
+   "task_type": 2,
+   "max_text_length": 9
+  },
+  "cn.suanya.zhixing": {
+   "task_type": 2
+  },
+  "com.jsmcc": {
+   "task_type": 2
+  },
+  "com.UCMobile": {
+   "task_type": 2
+  },
+  "com.crgt.ilife": {
+   "task_type": 2
+  },
+  "com.lucky.luckyclient": {
+   "task_type": 2
+  },
+  "com.baidu.BaiduMap": {
+   "task_type": 2
+  },
+  "com.psyone.brainmusic": {
+   "task_type": 2
+  }
+ },
+ "disabled": [
+  "com.android.settings",
+  "com.android.contactspicker",
+  "com.android.phone",
+  "com.android.server.telecom",
+  "com.android.incallui",
+  "com.android.mms.service",
+  "com.google.android.apps.messaging",
+  "com.google.android.dialer",
+  "com.spotify.music",
+  "com.netflix.mediaclient",
+  "com.huawei.search",
+  "com.sec.android.app.voicenote",
+  "com.eg.android.AlipayGphone",
+  "com.litiaotiao.app",
+  "cn.litiaotiao.app",
+  "com.quark.browser",
+  "com.google.android.gm",
+  "com.hicorenational.antifraud",
+  "com.kapp.youtube.final",
+  "com.android.calendar",
+  "com.android.dialer",
+  "com.android.mms",
+  "com.android.contacts",
+  "com.android.deskclock",
+  "com.android.alarmclock",
+  "com.android.camera",
+  "com.android.camera2",
+  "com.android.gallery3d",
+  "com.android.notes",
+  "com.android.filemanager",
+  "com.android.fileexplorer",
+  "com.android.soundrecorder",
+  "com.android.providers.downloads.ui",
+  "com.mfashiongallery.emag",
+  "com.miui.gallery",
+  "com.miui.voiceassist",
+  "com.miui.securitycenter",
+  "com.huawei.deskclock",
+  "com.huawei.camera",
+  "com.huawei.photos",
+  "com.huawei.contacts",
+  "com.huawei.HwMultiScreenShot",
+  "com.huawei.vassistant",
+  "com.huawei.meetime",
+  "com.huawei.hidisk",
+  "com.huawei.notepad",
+  "com.huawei.systemmanager",
+  "com.huawei.soundrecorder",
+  "com.android.BBKClock",
+  "com.vivo.gallery",
+  "com.vivo.agent",
+  "com.vivo.easyshare",
+  "com.android.bbksoundrecorder",
+  "com.iqoo.secure",
+  "com.vivo.permissionmanager",
+  "com.heytap.speechassist",
+  "com.oppo.camera",
+  "com.coloros.alarmclock",
+  "com.coloros.filemanager",
+  "com.coloros.gallery3d",
+  "com.coloros.safecenter",
+  "com.oppo.safe",
+  "com.coloros.oppoguardelf",
+  "com.oneplus.deskclock",
+  "com.oneplus.gallery",
+  "com.oneplus.filemanager",
+  "com.oneplus.mms",
+  "com.oneplus.contacts",
+  "com.oneplus.camera",
+  "com.oneplus.brickmode",
+  "com.oneplus.security",
+  "com.samsung.android.messaging",
+  "com.samsung.android.bixby.agent",
+  "com.sec.android.gallery3d",
+  "com.samsung.accessibility",
+  "com.samsung.android.app.contacts",
+  "com.sec.android.app.clockpackage",
+  "com.samsung.android.dialer",
+  "com.sec.android.app.camera",
+  "com.samsung.android.sm_cn",
+  "com.samsung.android.sm",
+  "com.meizu.filemanager",
+  "com.meizu.media.camera",
+  "com.meizu.media.gallery",
+  "com.meizu.voiceassistant",
+  "com.meizu.safe",
+  "com.zte.camera",
+  "zte.com.cn.filer",
+  "zte.com.cn.alarmclock",
+  "com.zte.halo.app",
+  "com.zte.heartyservice",
+  "com.smartisanos.clock",
+  "com.smartisanos.notes",
+  "com.smartisanos.filemanager",
+  "com.smartisanos.quicksearch",
+  "com.smartisanos.sara",
+  "com.smartisanos.recorder",
+  "com.smartisanos.sidebar",
+  "com.smartisanos.screenrecorder",
+  "com.smartisanos.security",
+  "com.zui.contacts",
+  "com.zui.gallery",
+  "com.zui.camera",
+  "com.zui.filemanager",
+  "com.zui.deskclock",
+  "com.zui.mms",
+  "com.zui.safecenter",
+  "com.lenovo.security",
+  "cn.nubia.deskclock.preset",
+  "cn.nubia.gallery3d",
+  "cn.nubia.voiceassist",
+  "cn.nubia.diyaod",
+  "cn.nubia.myfile",
+  "cn.nubia.mms",
+  "cn.nubia.contacts",
+  "cn.nubia.security2",
+  "com.tencent.mm",
+  "io.legado.app.release",
+  "io.legado.app.debug",
+  "io.legado.play.release",
+  "io.legado.play.debug"
+ ]
+}
