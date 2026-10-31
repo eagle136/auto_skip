@@ -197,7 +197,7 @@ releases/    build output, newest only
   60×24 height guard suppresses it but does not eliminate it.
 - Only arm64 and portrait coordinates are supported. Landscape is unverified.
 - Accessibility behavior differs sharply across ROMs (on ColorOS, `am force-stop` silently drops the
-  app from `enabled_accessibility_services`). See `会话续接.md` §7 for troubleshooting.
+  app from `enabled_accessibility_services`). Troubleshoot with `adb logcat -s SkipEngine:I`.
 
 ## License
 

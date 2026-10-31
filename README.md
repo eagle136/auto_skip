@@ -170,7 +170,7 @@ releases/    发布产物，只留最新一个
 - 下带（屏幕下方 42%）偶尔会把图片内容当目标，靠 60×24 高度护栏压制，不是根除。
 - 只适配 arm64 与竖屏坐标系；横屏未验证。
 - 各家 ROM 的无障碍行为差异大（ColorOS 上 `am force-stop` 会把本应用从
-  `enabled_accessibility_services` 里摘掉），排障见 `会话续接.md` §7。
+  `enabled_accessibility_services` 里摘掉），排障看 `adb logcat -s SkipEngine:I`。
 
 ## License
 
