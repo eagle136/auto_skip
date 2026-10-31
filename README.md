@@ -96,7 +96,7 @@
 需要 JDK 17+、Android SDK（`compileSdk 37`）。`native/` 里的 C 源码手编，正常构建不需要 NDK。
 
 ```bash
-git clone <repo>
+git clone https://github.com/eagle136/auto_skip.git
 cd auto_skip
 
 # SDK 路径

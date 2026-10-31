@@ -118,7 +118,7 @@ Requires JDK 17+ and the Android SDK (`compileSdk 37`). The C sources under `nat
 by hand; a normal build does not need the NDK.
 
 ```bash
-git clone <repo>
+git clone https://github.com/eagle136/auto_skip.git
 cd auto_skip
 
 # SDK location
