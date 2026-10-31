@@ -1,9 +1,10 @@
 # auto_skip · Splash Text Auto-Tap
 
-**The author does not recommend anyone use this project.**
+**Attempts to remove a specific slice of user well-being on app launch. Strongly not recommended.
+If you want to remove more of it, retrain the model yourself.**
 
-It does exactly one thing: during the one or two seconds an app takes to launch, it looks for text
-on screen that reads "Skip" or "Close", and taps it.
+Concretely: during the one or two seconds an app takes to launch, it finds short text at specific
+screen positions and taps it.
 
 That buys the user nothing of real value, and it costs the app publisher a real impression that
 would otherwise have happened. So what is published here is not a piece of software worth
@@ -58,7 +59,7 @@ event before any of this runs.
 ## What is actually worth reading
 
 The engineering time went into throughput and robustness trade-offs, none of which are about the
-skip behavior:
+behavior itself:
 
 - **Capture uses `screencap` raw frames** — BGRA8888 piped straight out of stdout. `screencap -p`
   (PNG) measured 0.96–1.10s; the raw frame is 210ms. That 5× is where the whole time budget comes
