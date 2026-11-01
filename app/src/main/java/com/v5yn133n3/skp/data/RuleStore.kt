@@ -125,9 +125,9 @@ object RuleStore {
         val user = rules.getString(pkg, null)?.let { runCatching { JSONObject(it) }.getOrNull() }
         val merged = merge(builtin[pkg], user)
         // 内置禁用名单以 {"ltt_service":false} 的形式进 builtin，这里只补真正没有声明过的包。
-        // 补的值跟 **识别方式** 对齐：默认走 OCR 的包必须让 ltt_service 为 false，
-        // 否则任务里任何遗留的 optBoolean(SERVICE_ON, true) 读法都会把节点路又拉起来。
-        if (!merged.has(K.SERVICE_ON)) merged.put(K.SERVICE_ON, modeOf(pkg) == RecogMode.A11Y)
+        // 补的值跟判定开关对齐：关掉的包必须让 ltt_service 为 false，否则任务里任何遗留的
+        // optBoolean(SERVICE_ON, true) 读法都会把节点路又拉起来。
+        if (!merged.has(K.SERVICE_ON)) merged.put(K.SERVICE_ON, isAppOn(pkg))
         return merged.put("pkg", pkg)
     }
 
@@ -156,53 +156,39 @@ object RuleStore {
     fun hasUserRule(pkg: String): Boolean = rules.contains(pkg)
 
     /**
-     * 每个应用用哪一种方式识别 —— **二选一**。
+     * 每个应用只有一个判定开关。
      *
-     * | 值 | 走哪条路 | 应用列表右栏 |
-     * |---|---|---|
-     * | [RecogMode.OCR] | 截图 → 扫带 → 小模型（像素路径） | OCR识别 开 |
-     * | [RecogMode.A11Y] | 无障碍节点任务（关键词 / 文本 / 路径 / 弹窗） | 无障碍识别 开 |
-     * | [RecogMode.OFF] | 都不跑 | 两颗都关（只有内置「不生效名单」会默认落到这里） |
+     * 开：节点路（无障碍）与视觉路（截图 → 扫带 → 小模型）**同时跑**，两条路各自命中后
+     * 互相让位（见 SkipService 的 nodeHitRecently / cornerHitRecently）。
+     * 关：两条都不跑。
      *
-     * 互斥由 [setMode] 保证：它在**一次写入**里同时落两个键，不会出现「先关这个再开那个」
-     * 的中间态。界面上的语义是「关掉一个 = 自动切到另一个」，因此不存在两颗全灭的手动路径；
-     * 全灭只来自内置 disabled 名单（旧版「这些应用没有广告」的名单）。
-     */
-    enum class RecogMode { OFF, OCR, A11Y }
-
-    /**
-     * 读该应用当前的识别方式。
+     * 存储沿用旧版两个键：`ocr_on` / `ltt_service` **任一为 true 都算开**，两个都为 false
+     * 才算关。旧版「二选一」留下的数据升级后自然变成「两条都开」。
      *
      * 判定顺序（用户显式设置 > 内置禁用名单 > 默认）：
-     *  1. 用户层只要写过 `ocr_on` 或 `ltt_service` 任一键，就按写过的值算；
-     *     两个都是 true 属于旧版（两颗开关独立）留下的脏数据，按 OCR 优先收敛；
-     *  2. 内置 disabled 名单里的包 = 都关，不能让默认值把它们重新打开；
-     *  3. **默认 [RecogMode.A11Y]（无障碍）**：2026-10-29 用户口径 —— 「默认为无障碍模式，
-     *     OCR 一个都不打开」，要扫带的应用由用户自己在列表里开。系统壳（设置 / 拨号 /
-     *     短信 / 通话 / 桌面 / 输入法 / 自己）一律 OFF，节点路也不能上去点。
+     *  1. 用户层只要写过 `ocr_on` 或 `ltt_service` 任一键，就按这两个键的或值算；
+     *  2. 内置 disabled 名单里的包 = 关，不能让默认值把它们重新打开；
+     *  3. **默认开**（与旧版默认无障碍一致），系统壳（设置 / 拨号 / 短信 / 通话 / 桌面 /
+     *     输入法 / 自己）一律关，节点路与视觉路都不能上去点。
      */
-    fun modeOf(pkg: String): RecogMode {
+    fun isAppOn(pkg: String): Boolean {
         val user = userJson(pkg)
-        if (user != null) {
-            if (user.has(K.OCR_ON) || user.has(K.SERVICE_ON)) {
-                if (user.optBoolean(K.OCR_ON, false)) return RecogMode.OCR
-                if (user.optBoolean(K.SERVICE_ON, false)) return RecogMode.A11Y
-                return RecogMode.OFF
-            }
+        if (user != null && (user.has(K.OCR_ON) || user.has(K.SERVICE_ON))) {
+            return user.optBoolean(K.OCR_ON, false) || user.optBoolean(K.SERVICE_ON, false)
         }
-        if (isBuiltinDisabled(pkg)) return RecogMode.OFF
-        if (!this::ctx.isInitialized) return RecogMode.A11Y
-        if (pkg == ctx.packageName) return RecogMode.OFF
-        if (pkg in SYSTEM_SHELL) return RecogMode.OFF
-        if (pkg in shellPkgs()) return RecogMode.OFF
-        return RecogMode.A11Y
+        if (isBuiltinDisabled(pkg)) return false
+        if (!this::ctx.isInitialized) return true
+        if (pkg == ctx.packageName) return false
+        if (pkg in SYSTEM_SHELL) return false
+        if (pkg in shellPkgs()) return false
+        return true
     }
 
-    /** 设置识别方式。一次写入两个键，保证「只有一个生效」不会出现中间态。 */
-    fun setMode(pkg: String, mode: RecogMode) {
+    /** 开/关一个应用的判定。两个键写同一个值，旧版本读任何一条都能理解。 */
+    fun setAppOn(pkg: String, on: Boolean) {
         val user = userJson(pkg) ?: JSONObject()
-        user.put(K.OCR_ON, mode == RecogMode.OCR)
-        user.put(K.SERVICE_ON, mode == RecogMode.A11Y)
+        user.put(K.OCR_ON, on)
+        user.put(K.SERVICE_ON, on)
         rules.edit().putString(pkg, user.toString()).apply()
     }
 
@@ -210,27 +196,12 @@ object RuleStore {
         rules.getString(pkg, null)?.let { runCatching { JSONObject(it) }.getOrNull() }
 
     /**
-     * 四角任务（扫带 / OCR）的目标应用。
+     * 四角任务（扫带 / OCR）的目标应用。开关打开即同时是节点路和视觉路的目标。
      *
-     * 判据是 [modeOf] == OCR，**不再叠加** [isEnabled]：两颗开关现在互斥，
-     * 走 OCR 的包 `ltt_service` 必然是 false，再按「生效」判会把它们全挡掉。
-     *
-     * 系统壳（桌面 / 输入法 / 系统界面 / 设置）必须排除：它们没有广告，但按坐标点一下
-     * 就是搜索页、权限弹窗、设置项，代价比漏一次广告大得多。
+     * 系统壳（桌面 / 输入法 / 系统界面 / 设置）由 [isAppOn] 排除：它们没有广告，
+     * 但按坐标点一下就是搜索页、权限弹窗、设置项，代价比漏一次广告大得多。
      */
-    fun isCornerTarget(pkg: String): Boolean {
-        if (modeOf(pkg) != RecogMode.OCR) return false
-        if (!this::ctx.isInitialized) return false
-        if (pkg == ctx.packageName) return false
-        if (pkg in SYSTEM_SHELL) return false
-        return pkg !in shellPkgs()
-    }
-
-    /** 该包是否走 OCR（扫带）识别。**默认 false**（默认全走无障碍），与「无障碍识别」互斥。 */
-    fun isOcrOn(pkg: String): Boolean = modeOf(pkg) == RecogMode.OCR
-
-    /** 关掉 OCR = 改走无障碍（两条路永远只有一条在跑），不是两颗都关。 */
-    fun setOcrOn(pkg: String, on: Boolean) = setMode(pkg, if (on) RecogMode.OCR else RecogMode.A11Y)
+    fun isCornerTarget(pkg: String): Boolean = isAppOn(pkg)
 
     /** 桌面（HOME 解析结果）+ 已安装/已启用输入法。查询失败就当空集，宁可多扫不误点系统壳。 */
     private fun shellPkgs(): Set<String> {
@@ -285,17 +256,8 @@ object RuleStore {
             pkg == "android" ||
             isIme(pkg)
 
-    /**
-     * 该包是否走**无障碍节点识别**（应用列表右侧第二颗）。等价于 [modeOf] == A11Y。
-     *
-     * 语义变化：这个方法以前是「生效应用列表」的总开关（默认 true，与 OCR 是「与」关系）。
-     * 两颗开关改成互斥后，它只代表无障碍这一条路 —— 走 OCR 的包这里恒为 false，
-     * 调用方不要再拿它当「这个包要不要处理」的判据（用 [modeOf] != OFF）。
-     */
-    fun isEnabled(pkg: String): Boolean = modeOf(pkg) == RecogMode.A11Y
-
-    /** 关掉无障碍 = 改走 OCR。 */
-    fun setEnabled(pkg: String, on: Boolean) = setMode(pkg, if (on) RecogMode.A11Y else RecogMode.OCR)
+    /** 该包是否要处理（节点路与视觉路共用这一个判据）。 */
+    fun isEnabled(pkg: String): Boolean = isAppOn(pkg)
 
     var foregroundServiceOn: Boolean
         get() = global.getBoolean(K.FOREGROUND_SERVICE, true)

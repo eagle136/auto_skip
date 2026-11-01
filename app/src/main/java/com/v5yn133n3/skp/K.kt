@@ -48,11 +48,11 @@ object K {
     const val CORNER_MODE = "corner_mode"
 
     /**
-     * 每包的 OCR 识别开关（应用列表右侧第一颗）。
+     * 每包 OCR 识别开关（应用列表右侧的那一颗）。
      *
-     * 与 [SERVICE_ON]（无障碍识别）**互斥二选一**，由 `RuleStore.setMode` 同时写两个键
-     * 保证：开一颗另一颗必然为 false。两者都为 false = 这个应用不处理。
-     * 与全局 [CORNER_ON] 仍是「与」关系（全局关了谁都不扫）。
+     * 与 [SERVICE_ON]（无障碍）**同开同关**，由 `RuleStore.setAppOn` 同时写两个键：
+     * 开 = 两条链路同时跑，两个键都是 true；关 = 两个键都是 false。
+     * 读到旧版二选一的数据时按「任一为 true 即开」兼容。
      */
     const val OCR_ON = "ocr_on"
 

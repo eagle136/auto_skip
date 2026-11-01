@@ -300,10 +300,10 @@ class SkipService : AccessibilityService() {
         if (!switched) return
 
         val json = RuleStore.ruleOf(pkg)
-        // 无障碍节点路只在「这个包选了无障碍识别」时才跑。两颗开关互斥：选 OCR 的包
-        // ltt_service 恒为 false，这里必须走 RuleStore 判，不能再读 json 的默认 true。
-        if (!RuleStore.isEnabled(pkg)) {
-            Log.i(TAG, "switch pkg=$pkg mode=a11y-off，不生成节点任务")
+        // 判定开关关掉的包两条路都不跑；打开后节点路在这里生成，四角路由
+        // triggerCorner 同时拉起，两者互不排斥。
+        if (!RuleStore.isAppOn(pkg)) {
+            Log.i(TAG, "switch pkg=$pkg 判定关闭，不生成节点任务")
             return
         }
 
@@ -326,8 +326,8 @@ class SkipService : AccessibilityService() {
             spawn(PopupTask(this, json), event); spawned += "popup"
         }
 
-        // 四角：像素找框 → 小模型确认，与节点任务并行。需要截图通道，纯无障碍档自然跑不起来，
-        // 任务自己会记 miss reason=no-priv。目标应用判定见 RuleStore.isCornerTarget：
+        // 四角：像素找框 → 小模型确认，与节点任务并行。需要截图通道，
+        // 没通道时任务自己会记 miss reason=no-priv。目标应用判定见 RuleStore.isCornerTarget：
         // 它是按坐标点，落到桌面/输入法/设置上就是乱点。
         Log.i(TAG, "switch pkg=$pkg task_type=$taskType spawned=${spawned.joinToString("+").ifEmpty { "none" }} " +
             "timeout=${json.optInt(K.TIMEOUT, K.DEFAULT_TIMEOUT_MS)}ms")

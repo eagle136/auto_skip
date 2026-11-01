@@ -8,8 +8,6 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,10 +19,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.size
@@ -67,7 +62,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
@@ -197,92 +191,20 @@ fun BackArrow(onClick: () -> Unit) {
 }
 
 /**
- * 应用列表行尾的「识别方式」大开关：一颗胶囊，滑块停在左/右表示当前档位，点一下滑到另一头。
+ * 应用列表行尾的判定开关：开 = 节点路与视觉路同时跑，关 = 两条都不跑。
  *
- * 为什么不再用两颗 Switch：两颗并排一来看不出「互斥」，二来每行要占 160dp，
- * 应用名被挤得只剩几个字。现在一颗胶囊同时承担「显示状态」和「切换」：
- * 滑块在左 = 无障碍（绿），滑块在右 = OCR（蓝），灰滑块 = 内置不生效名单。
- * 文字始终待在滑块让出来的那一侧，点下去滑块滑过去、文字顺势挪到另一头。
- *
- * 点击语义只有一条：OCR ↔ 无障碍，永远只有一条路在跑。
- * 三态里的 OFF 只来自内置「不生效名单」（相机 / 时钟 / 微信…），点一下直接进 OCR ——
- * 用户肯点就说明他想在这个应用里开 OCR。
+ * 固定宽度的容器只为了让表头「启用」和每一行的开关对齐；
+ * 点击由 Switch 自己消费，不会连带触发整行的「打开规则页」。
  */
 @Composable
-fun ModePill(mode: RuleStore.RecogMode, onClick: () -> Unit) {
-    val accent: Color
-    val label: String
-    when (mode) {
-        RuleStore.RecogMode.OCR -> {
-            accent = Color(0xFF2AA9E0)
-            label = "OCR模式"
-        }
-        RuleStore.RecogMode.A11Y -> {
-            accent = Color(0xFF34C759)
-            label = "无障碍模式"
-        }
-        RuleStore.RecogMode.OFF -> {
-            accent = Color(0xFF5C5C5C)
-            label = "已关闭"
-        }
-    }
-    // 只有 OCR 把滑块推到右边；无障碍 / 已关闭都停在左边。
-    val atRight = mode == RuleStore.RecogMode.OCR
-    // 滑块位移和文字让位共用一段时长：滑过去的同时文字挪到另一头，看着像一颗真开关。
-    val slide = tween<Dp>(durationMillis = 190)
-    val knobX by animateDpAsState(
-        targetValue = if (atRight) MODE_PILL_W - MODE_PILL_KNOB else 0.dp,
-        animationSpec = slide,
-        label = "knobX",
-    )
-    val textStart by animateDpAsState(
-        targetValue = if (atRight) 0.dp else MODE_PILL_KNOB,
-        animationSpec = slide,
-        label = "textStart",
-    )
-    val textEnd by animateDpAsState(
-        targetValue = if (atRight) MODE_PILL_KNOB else 0.dp,
-        animationSpec = slide,
-        label = "textEnd",
-    )
-    Box(
-        Modifier
-            .width(MODE_PILL_W)
-            .height(MODE_PILL_H)
-            .clip(RoundedCornerShape(50))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(1.5.dp, BoxGray, RoundedCornerShape(50))
-            .clickable(onClick = onClick),
-    ) {
-        // 滑块：与胶囊同高、两端都是半圆，贴住哪一头都像嵌在壳里
-        Box(
-            Modifier
-                .offset(x = knobX)
-                .width(MODE_PILL_KNOB)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(50))
-                .background(accent),
-        )
-        // 文字在滑块让出来的那一侧居中（padding 走动画，所以是平移过去而不是跳过去）
-        Text(
-            label,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .fillMaxWidth()
-                .padding(start = textStart, end = textEnd),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            color = Color.White,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-        )
+fun AppSwitch(on: Boolean, onToggle: (Boolean) -> Unit) {
+    Box(Modifier.width(APP_SWITCH_W), contentAlignment = Alignment.Center) {
+        Switch(checked = on, onCheckedChange = onToggle)
     }
 }
 
-/** 胶囊总宽 / 高 / 滑块宽。表头那一列也按 [MODE_PILL_W] 对齐。 */
-private val MODE_PILL_W = 122.dp
-private val MODE_PILL_H = 34.dp
-private val MODE_PILL_KNOB = 42.dp
+/** 开关列宽。表头那一列也按 [APP_SWITCH_W] 对齐。 */
+private val APP_SWITCH_W = 72.dp
 
 /** 生效应用列表入口固定在标题栏右上角，单击直达。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -522,7 +444,7 @@ fun AppsScreen(onBack: () -> Unit, onOpenRule: (String) -> Unit) {
         apps.addAll(loaded)
     }
 
-    // 行尾只有一颗「识别方式」胶囊，表头也只剩一列，宽度与胶囊一致才能对齐。
+    // 行尾只有一颗判定开关，表头也只剩一列，宽度与开关一致才能对齐。
     var tick by remember { mutableStateOf(0) }
 
     Scaffold(
@@ -547,7 +469,7 @@ fun AppsScreen(onBack: () -> Unit, onOpenRule: (String) -> Unit) {
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            // 表头：名称 / 识别方式。左边距与行内一致（12 列表内边距 + 10 行内边距），
+            // 表头：名称 / 启用。左边距与行内一致（12 列表内边距 + 10 行内边距），
             // 再加 46dp 让「名称」正好落在应用名上方（图标 36 + 间距 10）。
             Row(
                 Modifier
@@ -558,7 +480,7 @@ fun AppsScreen(onBack: () -> Unit, onOpenRule: (String) -> Unit) {
                 Spacer(Modifier.width(46.dp))
                 Text("名称", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = BoxGray)
                 Text(
-                    "识别方式", Modifier.width(MODE_PILL_W),
+                    "启用", Modifier.width(APP_SWITCH_W),
                     style = MaterialTheme.typography.bodySmall, color = BoxGray,
                     textAlign = TextAlign.Center,
                 )
@@ -569,9 +491,8 @@ fun AppsScreen(onBack: () -> Unit, onOpenRule: (String) -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(apps, key = { it.pkg }) { entry ->
-                    // 当前识别方式。依赖 tick：在任意一行点开关后所有行一起刷新，
-                    // 这样「另一颗自动关」能立刻显示出来。
-                    val mode = remember(entry.pkg, tick) { RuleStore.modeOf(entry.pkg) }
+                    // 当前判定开关。依赖 tick：点任意一行后所有行一起刷新。
+                    val on = remember(entry.pkg, tick) { RuleStore.isAppOn(entry.pkg) }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -612,14 +533,9 @@ fun AppsScreen(onBack: () -> Unit, onOpenRule: (String) -> Unit) {
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        // 一颗胶囊 = 显示当前档位 + 点一下换另一条路。
-                        // 点 OCR 模式的胶囊 → 无障碍；点无障碍/已关闭 → OCR。
-                        ModePill(mode) {
-                            RuleStore.setMode(
-                                entry.pkg,
-                                if (mode == RuleStore.RecogMode.OCR) RuleStore.RecogMode.A11Y
-                                else RuleStore.RecogMode.OCR,
-                            )
+                        // 开关只决定这个应用跑不跑判定；打开后两条识别链路同时工作。
+                        AppSwitch(on) {
+                            RuleStore.setAppOn(entry.pkg, it)
                             tick++
                         }
                     }
