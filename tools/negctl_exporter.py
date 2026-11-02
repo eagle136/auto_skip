@@ -6,15 +6,32 @@
 """
 import io
 import os
+import re
 import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-V0_SRC = "D:/apk_edit/auto_skip_jadx/sources/f2/v0.java"
-STR_SRC = "D:/apk_edit/auto_skip_apktool/res/values/strings.xml"
-ARR_SRC = "D:/apk_edit/auto_skip_apktool/res/values/arrays.xml"
+APK_EDIT = os.path.abspath(
+    os.environ.get("SKP_APK_EDIT") or os.path.join(ROOT, "..", "..", "apk_edit")
+)
+V0_SRC = os.path.join(APK_EDIT, "auto_skip_jadx", "sources", "f2", "v0.java")
+STR_SRC = os.path.join(APK_EDIT, "auto_skip_apktool", "res", "values", "strings.xml")
+ARR_SRC = os.path.join(APK_EDIT, "auto_skip_apktool", "res", "values", "arrays.xml")
 TOOL = os.path.join(ROOT, "tools", "export_default_rules.py")
 WORK = os.path.join(ROOT, "build", "negctl")
+
+
+def _retarget(src, var, path):
+    """把被测脚本里 `VAR = ...` 那一行改成指向负控临时目录。
+
+    用行级正则而不是字面量替换：源脚本里的路径现在由 os.path.join 拼出来，
+    字面量一改就再也匹配不上，负控会静默失效（全当"通过"）。
+    """
+    value = path.replace("\\", "/")
+    out, n = re.subn(r"(?m)^%s = .*$" % re.escape(var), '%s = "%s"' % (var, value), src, count=1)
+    if n != 1:
+        raise SystemExit("[fatal] 负控注入失败：%s 里找不到 `%s = ` 这一行" % (TOOL, var))
+    return out
 
 v0 = io.open(V0_SRC, encoding="utf-8").read()
 strings = io.open(STR_SRC, encoding="utf-8").read()
@@ -48,13 +65,10 @@ def run(name, src_v0, src_strings, src_arrays):
     io.open(os.path.join(d, "strings.xml"), "w", encoding="utf-8", newline="\n").write(src_strings)
     io.open(os.path.join(d, "arrays.xml"), "w", encoding="utf-8", newline="\n").write(src_arrays)
     tool = io.open(TOOL, encoding="utf-8").read()
-    tool = tool.replace('V0 = "D:/apk_edit/auto_skip_jadx/sources/f2/v0.java"', 'V0 = "%s/v0.java"' % d.replace("\\", "/"))
-    tool = tool.replace('STRINGS = "D:/apk_edit/auto_skip_apktool/res/values/strings.xml"', 'STRINGS = "%s/strings.xml"' % d.replace("\\", "/"))
-    tool = tool.replace('ARRAYS = "D:/apk_edit/auto_skip_apktool/res/values/arrays.xml"', 'ARRAYS = "%s/arrays.xml"' % d.replace("\\", "/"))
-    tool = tool.replace(
-        'OUT = "C:/Users/eagle/AndroidStudioProjects/auto_skip/app/src/main/assets/default_rules.json"',
-        'OUT = "%s/out.json"' % d.replace("\\", "/"),
-    )
+    tool = _retarget(tool, "V0", os.path.join(d, "v0.java"))
+    tool = _retarget(tool, "STRINGS", os.path.join(d, "strings.xml"))
+    tool = _retarget(tool, "ARRAYS", os.path.join(d, "arrays.xml"))
+    tool = _retarget(tool, "OUT", os.path.join(d, "out.json"))
     p = os.path.join(d, "tool.py")
     io.open(p, "w", encoding="utf-8", newline="\n").write(tool)
     env = dict(os.environ)

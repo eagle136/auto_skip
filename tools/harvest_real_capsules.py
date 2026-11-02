@@ -40,7 +40,7 @@ def find_adb():
         return w
     for c in [
         os.path.expanduser(r"~\AppData\Local\Android\Sdk\platform-tools\adb.exe"),
-        r"C:\Users\eagle\AppData\Local\Android\Sdk\platform-tools\adb.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"),
     ]:
         if os.path.exists(c):
             return c

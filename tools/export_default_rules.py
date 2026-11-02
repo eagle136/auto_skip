@@ -3,10 +3,11 @@
 """
 从反编译源导出内置默认规则表。
 
-来源（只读）：
-  D:/apk_edit/auto_skip_jadx/sources/f2/v0.java          每包一条规则，值是手拼的 JSON 文本
-  D:/apk_edit/auto_skip_apktool/res/values/strings.xml    R.string.X 的真实取值
-  D:/apk_edit/auto_skip_apktool/res/values/arrays.xml     内置不生效名单 whitelist
+来源（只读，反编译根目录默认取仓库同级的 `../apk_edit`，可用环境变量
+`SKP_APK_EDIT` 覆盖，仓库里不写死任何本机路径）：
+  <APK_EDIT>/auto_skip_jadx/sources/f2/v0.java          每包一条规则，值是手拼的 JSON 文本
+  <APK_EDIT>/auto_skip_apktool/res/values/strings.xml    R.string.X 的真实取值
+  <APK_EDIT>/auto_skip_apktool/res/values/arrays.xml     内置不生效名单 whitelist
 
 产物：app/src/main/assets/default_rules.json
 
@@ -17,15 +18,23 @@
   4. 回放：把产物里的规则重新拼回旧版那种紧凑文本，与源码里的字面量逐字符比对。
 """
 import json
+import os
 import re
 import sys
 from xml.etree import ElementTree as ET
 
-V0 = "D:/apk_edit/auto_skip_jadx/sources/f2/v0.java"
-V0_SMALI = "D:/apk_edit/auto_skip_apktool/smali/f2/v0.smali"
-STRINGS = "D:/apk_edit/auto_skip_apktool/res/values/strings.xml"
-ARRAYS = "D:/apk_edit/auto_skip_apktool/res/values/arrays.xml"
-OUT = "C:/Users/eagle/AndroidStudioProjects/auto_skip/app/src/main/assets/default_rules.json"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+APK_EDIT = os.path.abspath(
+    os.environ.get("SKP_APK_EDIT") or os.path.join(ROOT, "..", "..", "apk_edit")
+)
+JADX = os.path.join(APK_EDIT, "auto_skip_jadx")
+APKTOOL = os.path.join(APK_EDIT, "auto_skip_apktool")
+
+V0 = os.path.join(JADX, "sources", "f2", "v0.java")
+V0_SMALI = os.path.join(APKTOOL, "smali", "f2", "v0.smali")
+STRINGS = os.path.join(APKTOOL, "res", "values", "strings.xml")
+ARRAYS = os.path.join(APKTOOL, "res", "values", "arrays.xml")
+OUT = os.path.join(ROOT, "app", "src", "main", "assets", "default_rules.json")
 
 # 用户点名不处理的包：界面里没有需要点击的跳过按钮，直接从规则表挪进不生效名单
 FORCE_DISABLED = ("com.tencent.mm", "com.eg.android.AlipayGphone")

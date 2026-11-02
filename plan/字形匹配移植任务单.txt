@@ -1,0 +1,329 @@
+================================================================================
+ 字形匹配（GlyphMatch）替换 CNN + 主页三开关 + 1s 节流   任务单 v1.0
+ 2026-11-02 19:40        工作区：<repo>
+================================================================================
+
+一、这一单要干四件事
+--------------------------------------------------------------------------------
+  1. Python 原型补掉最后 1 张漏检（斜光带压字）           → 见 Step 1（已做完 90%）
+  2. 把 Python 算法原样搬到 Kotlin，替换 OCR 路的 SkipNet → 见 Step 2/3/4
+  3. 主页加识别方式三开关：无障碍 / OCR / 并发            → 见 Step 5
+  4. 识别节流到「1s 内最多 1 次」                         → 见 Step 6
+
+  不做：高度比例（40%W×25%H 已定，改不改以后再说）、SkipNet 删除（保留作对照）
+
+
+二、Step 1  Python 补漏（R:\glyph_ocr\glyphmatch.py）
+--------------------------------------------------------------------------------
+根因（实测，非推测）
+  01-24-33 那张：高亮光带与白字同色 → DoG 后光带边缘留一条 45° 细线 →
+  把「跳」「过」粘成一块 h=73（单字高 37）→ split_wide 切不开 → 全图 0 候选。
+
+改动（4 处）
+  [1] 新增常量  DIAG_LEN = 16                                   行 42
+  [2] 新增函数  strip_diag(mask, ang, L)                        行 98-113
+      45°/135° 线段结构元素做开运算 → 只保留"沿该方向连续 ≥16px"的成分 →
+      从 mask 里减掉。汉字没有这么长的纯斜笔画，所以字还在。
+  [3] block_candidates：mask 变体循环（仅 allow_partial 那一轮）  行 386-450
+      variants = [raw] + [strip_diag(raw, ±1)]，条件「确实剥掉了 ≥40px」
+  [4] refine80：同样加 rawvars 循环                              行 335-365
+      ★ 这处是必须的：64 窗过了线，80 窗里重新二值化又粘上，复核失败→当误报丢掉。
+        第一版只改了 [3]，现象就是"诊断脚本里 0.772，跑 detect 还是漏"。
+
+实测数据
+  剥掉 759/2214 px（34%），跳 0.772 / 过 0.772，combo 0.772
+  定位 (917,127,995,164)，相邻帧真值 (921,128,996,164)，差 ≤4px
+  代价：Python 单图 32s → 70s（变体×3）；Kotlin 侧是位运算，不具参考性，见 Step 3
+
+验收
+  12 进程全量 28 张：命中 28/28，误报 0/28（待回归结果填入本单末尾）
+
+
+三、Step 2  性能预算：要不要 C / 要不要 4 线程
+--------------------------------------------------------------------------------
+先给结论
+  **不需要 C，也不需要 4 线程。** Kotlin + u64 位平面，单图预估 30–80ms，
+  1s 一次的节流下余量 10 倍以上；上 C/JNI 只增加构建与崩溃面，收益为零。
+
+运算量估算（1080×2352，四角 432×588，四块合计 1.02M px）
+  阶段                          量级            说明
+  ----------------------------  --------------  ------------------------------
+  灰度 + DoG 3 尺度（积分图）    6.1M px-ops     每尺度 2 次 box filter，O(1)/px
+  阈值/细线剥离/斜线剥离         20M px-ops      每 (尺度×阈值×极性) 一遍
+  连通域 BFS                    12M px-ops      8 邻域，一遍
+  候选打分（位平面）             ~4M popcount    400 候选 × 6 模板 × 25 位移 × 64 word
+  候选打分（若逐像素 int）       ~245M ops       ← 慢 1 个数量级，必须用位平面
+
+  ★ 关键优化（不是可选）：
+    - 64×64 模板与候选都打包成 64 个 u64（行主序），IoU 用 and+popcount
+    - 位移搜索用"整行移位 + 进位"，不要 memcpy 重建数组
+    - 空窗口（win 内 ink < 阈值）直接跳过：实测能砍 60–70% 窗口
+    - 模板预乘：12 个 base 模板 + 膨胀/腐蚀 2 档在初始化时算好，运行期只读
+
+Python 侧的真实耗时分布（cProfile，22-57-18 那张，总 34.9s/含插桩放大）
+  函数                 累计    占比   调用次数   说明
+  ------------------  ------  -----  --------  --------------------------------
+  refine80             28.8s   83%      1054   ★ 真正的大头，每次 27ms
+   └ binary_erosion    20.5s   59%    282915   全是小数组形态学，numpy 调用开销
+  score                 8.0s   23%     25920   IoU 25 位移 × 6 模板
+  strip_thin_lines      7.5s   21%     12732
+  strip_diag            7.0s   20%     25156
+  label_comps           1.8s    5%     21372
+  norm_shape            1.8s    5%     23008
+
+  ★ 结论直接改写了移植策略：
+    - refine80 被调用 1054 次 = 每个 ≥0.50 的单字候选都触发一次，而每次内部
+      3 尺度 × 2 阈值 × 2 极性 × 3 变体 = 36 遍完整链路。移植时必须加两条早退：
+        a) 某遍得分 ≥0.75 立即返回（不再跑剩下的 35 遍）
+        b) REFINE_TRIGGER 从 0.50 提到 0.58（0.50–0.58 的候选不值得复核）
+    - 形态学在 Kotlin 是 u64 位运算，同样的操作比 scipy 小数组快 1–2 个数量级
+    - 因此"Python 34.9s" 完全不能外推成端上耗时
+
+若实测 >300ms 再谈并行
+  四角是天然独立的 4 个任务，用 4 个线程池各跑一角即可；但 1s 节流下没必要。
+  先用单线程，真机日志里看 `frame=xxxms`，超过 300ms 再开线程。
+
+
+四、Step 3  模板资产（assets/glyph/tmpl.bin）
+--------------------------------------------------------------------------------
+格式（小端）
+  offset 0   : "GLY1"                    4B magic
+  offset 4   : u8 ver = 1
+  offset 5   : u8 nChar = 2
+  offset 6   : u8 nFace = 6
+  offset 7   : 保留 1B
+  offset 8   : nChar × nFace × 512B      每个模板 = 64×64 bit，行主序
+  total      : 8 + 2×6×512 = 6152B
+
+  字符顺序固定  ["跳","过"]；字体顺序固定取 glyphmatch.FACES 前 6 项：
+  ["simhei","NotoSansSC-VF","msyh","msyhl","msyhbd","deng"]
+  导出实测 ink：跳 1085/500/1053/772/1644/914，过 805/358/827/583/1325/620
+  （NotoSansSC-VF 是 VF 默认极细权重，ink 只有 500，作用相当于"更细一档"）
+  运行时只读不解析，索引 = charIdx * nFace + faceIdx
+
+  为什么不用 Paint+Typeface 现场渲染：Android 是 Noto Sans CJK，字形与调参用的
+  中易黑体不同，IoU 会整体掉 0.05–0.1，等于把标定过的阈值全部作废。打包二进制最稳。
+
+生成脚本：R:\glyph_ocr\export_tmpl.py（本单新增，输出到 app/src/main/assets/glyph/tmpl.bin）
+
+
+五、Step 4  Kotlin 实现
+--------------------------------------------------------------------------------
+新增 2 个文件（不改动现有 CornerScan / SkipNet）
+
+  app/src/main/java/com/v5yn133n3/skp/engine/GlyphBank.kt        ~220 行
+    - load(ctx): 读 assets/glyph/tmpl.bin → 12 个 LongArray(64)
+    - 每模板预生成 2 档（膨胀/腐蚀）→ 36 个 LongArray(64)
+    - score(cand: LongArray, charIdx: Int): Float   25 位移 × 3 档 IoU 取最大
+    - quick(cand): FloatArray  用 8×8 降采样粗筛，挡掉明显不是汉字的形状
+
+  app/src/main/java/com/v5yn133n3/skp/engine/GlyphScan.kt        ~420 行
+    - scan(gray: ByteArray, w: Int, h: Int): Hit?   四角依次扫，返回第一个命中
+    - 与 Python 一一对应：
+        integralBoxMean  → dog()          （3 尺度：(1,7)(2,11)(3,15)）
+        stripThinLines   → 长 60 厚 5 的横/竖长线开运算 + 法向膨胀
+        stripDiag        → 45°/135° 长 16 线段开运算（新增，Step 1 的移植）
+        labelComps       → BFS，8 邻域，minH=9 maxH=120
+        closeStrokes     → r=2 圆核闭运算（粘 3px 断口）
+        splitWide        → 超宽块按列墨量最低点切
+        normShape        → 两轴独立归一化到 64×64（★ 不能保长宽比）
+        refine80         → 80×80 复核，含 stripDiag 变体
+        pickPair         → 跳在左过在右，高比 0.75–1.33、中心差 ≤0.3h、间隙 −0.1h…0.55h
+    - 常量全部硬编码（与 Python 一致）：
+        CELL_W=0.40 CELL_H=0.25  WIN=64 STRIDE=40
+        S_MIN=0.62 S_MEAN=0.68 PAIR_MIN=0.52 REFINE_TRIGGER=0.50 S_CHAR_MIN=0.55
+        POL_T={14,24} DIAG_LEN=16 STRIP_LEN=60 STRIP_THICK=5
+
+  像素输入：直接用现有的 Capture.Frame（已经是灰度 ByteArray，见 priv/Capture.kt）
+
+
+六、Step 5  接入 OCR 路（CornerTask.kt）
+--------------------------------------------------------------------------------
+  行 208   useModel 判断处
+     val mode = RuleStore.cornerMode          // "glyph" / "model" / "pixel"
+     val useGlyph = mode == RuleStore.CORNER_MODE_GLYPH
+     if (useGlyph && !GlyphBank.load(ctx))  → 报错退出（同 model-unavailable 口径）
+
+  行 649-659  单个候选框打分处
+     if (useGlyph) {
+         p = GlyphScan.scoreBox(frame, bx, by, bw, bh)   // 框内两字配对，返回 0..1
+     } else {
+         p = SkipNet.scoreRobust(...)                    // 原路径不动
+     }
+
+  ★ 关键取舍：字形匹配是「自己找字」，不是「给框打分」。
+    所以 scoreBox 内部做的是：把框外扩 1.3 倍取像素 → 框内跑一遍完整链路
+    （DoG→剥离→分割→归一化→IoU→配对），命中返回 combo，否则 0。
+    这样复用现有提案器（BlobGate 已过一遍），算力只有整屏扫的 1/20。
+
+  兜底：如果整帧候选为空（提案器没给框），且 useGlyph，则允许每 3 帧做一次
+     GlyphScan.scanFull(frame)  整块扫描（h=25% 的四角），捞提案器漏掉的细白字。
+     开关：K.GLYPH_FULL_FALLBACK_EVERY = 3
+
+  RuleStore.kt
+    行 22-23 附近加  const val CORNER_MODE_GLYPH = "glyph"
+    行 286-288 cornerMode 默认值改成 CORNER_MODE_GLYPH
+
+
+七、Step 6  主页识别方式三开关
+--------------------------------------------------------------------------------
+  K.kt（行 46 附近，紧挨 CORNER_ON）
+     const val SCAN_MODE      = "scan_mode"
+     const val SCAN_MODE_NODE = "node"     // 只跑无障碍
+     const val SCAN_MODE_OCR  = "ocr"      // 只跑四角 OCR
+     const val SCAN_MODE_BOTH = "both"     // 并发（默认，= 现状）
+
+  RuleStore.kt（行 282 附近，紧跟 cornerOn）
+     var scanMode: String
+         get() = global.getString(K.SCAN_MODE, K.SCAN_MODE_BOTH) ?: K.SCAN_MODE_BOTH
+         set(v) = global.edit().putString(K.SCAN_MODE, v).apply()
+
+  SkipService.kt
+     行 551  spawn() 开头：  if (RuleStore.scanMode == K.SCAN_MODE_OCR) return
+     行 349  triggerCorner() 开头（放在 isCornerTarget 块之后、val now 之前）：
+                             if (RuleStore.scanMode == K.SCAN_MODE_NODE) return
+     ★ 不能放在函数第一行：那个 if 块负责"离开目标应用时清 lastCornerPkg"，
+       提前 return 会让"出去再回来"不再触发。
+
+  CornerTask.kt 行 307 帧循环开头（`while (!cancelled) {` 之后第一行）：
+     if (RuleStore.scanMode == K.SCAN_MODE_NODE) { reason = "mode-node"; break }
+     ★ 这样主页一改成 node，已经在跑的 task 下一帧就自己退，不用静态引用。
+
+  MainActivity.kt（行 335「OCR识别」卡片之前插一张新卡）
+     InkCard {
+         Text("识别方式", fontWeight = Bold)
+         InkOption × 3（复用行 287 的 InkOption 写法，RadioButton + 两行说明）
+           无障碍模式  —— 只走节点文本，最省电，认不出图片里的跳过
+           OCR 模式    —— 只走画面识别（字形匹配），不读节点
+           并发模式    —— 两条同时跑，谁先命中谁点（默认）
+         副标题显示提示："改完立即生效，不用重启服务"
+     }
+
+
+八、Step 7  1s 节流
+--------------------------------------------------------------------------------
+  K.kt
+     const val MIN_SCAN_INTERVAL_MS = 1000L      // 测试版口径：1s 最多识别 1 次
+
+  CornerTask.kt 行 816
+     原：  if (!fast) sleep(K.CORNER_SLOW_GAP_MS)
+     改：  val elapsed = SystemClock.uptimeMillis() - tScan
+            val gap = K.MIN_SCAN_INTERVAL_MS - elapsed
+            if (gap > 0) sleep(gap)
+            else if (!fast) sleep(K.CORNER_SLOW_GAP_MS)
+     ★ 高频档也要节流：原来 fast 档靠截图 170ms 天然限速，一帧约 360ms，
+       3 帧/秒远超「1s 一次」的口径。
+     ★ 保留 fast/slow 区分：慢档仍额外补 1.2s，只是不会低于 1s。
+
+  日志补一条：`frame=xxxms gap=yyy` 便于真机核对节流是否生效。
+
+
+九、风险表
+--------------------------------------------------------------------------------
+  #  风险                                   概率  影响  应对
+  1  模板二进制与 Python 端不同步（改了Python  中   高   export_tmpl.py 输出 sha256，
+     忘了重导）                                       Kotlin 启动时打日志比对
+  2  Kotlin 归一化与 numpy LANCZOS 有细微差异  高   中   IoU 阈值下调一档（0.62→0.58），
+     → 真实分数整体低 0.03–0.08                     用 ImageTestActivity 离线图回归
+  3  框内 scoreBox 的"外扩 1.3 倍"把邻字带进来  中   中   外扩前先裁到框内 ink，
+     导致归一化失真                                  再看两侧是否有字
+  4  三开关切到 node 后 cornerTask 不退出       低   中   Step 6 的帧首检查 + 日志
+  5  1s 节流让"首帧就要出结果"变慢             中   中   首帧不节流（frames==1 跳过 gap）
+  6  stripDiag 在竖排字/艺术字上误伤             低   中   只在 allow_partial 那轮启用，
+                                                  且要求「剥掉 ≥40px」才生效
+  7  assets 读取失败（混淆后资源名）            低   高   release 用 getAssets().open，
+                                                   不走资源 ID，不受 shrinkResources 影响
+
+
+十、验收清单
+--------------------------------------------------------------------------------
+  Python 侧
+   [ ] 28/28 命中，0 误报（run_mp.py，12 进程）
+   [ ] 01-24-33 那张 box 与相邻帧真值差 ≤6px
+   [ ] cProfile 耗时分布已记录到本单第三节
+
+  Kotlin 侧（离线，ImageTestActivity 选图）
+   [ ] 28 张同一批图，命中 ≥27，误报 0
+   [ ] 单图耗时 ≤150ms（arm64 真机，release）
+   [ ] 与 Python 同一张图的 combo 分差 ≤0.05
+
+  Kotlin 侧（真机）
+   [ ] 三个模式都能跑：node 只出无障碍日志、ocr 只出 CORNER 日志、both 都有
+   [ ] 切模式后 1s 内生效
+   [ ] 日志 frame 间隔 ≥1000ms（除首帧）
+   [ ] 真机跑 30 分钟，误点 0
+
+ 构建
+   [ ] ./gradlew assembleDebug 通过
+   [ ] 版本号 versionCode 3 / versionName 1.2
+   [ ] 出包前跑一次 代 码 备 份.bat
+
+
+十一、执行顺序
+--------------------------------------------------------------------------------
+  1) Step 1 回归（28/28）              ← 现在
+  2) Step 3 导出模板 + 校验 sha256
+  3) Step 4 GlyphBank + GlyphScan（先跑通单图，不改 CornerTask）
+  4) Step 5 接入 CornerTask + ImageTestActivity 离线回归
+  5) Step 6/7 三开关 + 节流 + 主页 UI
+  6) 构建 → 真机 30 分钟
+  7) 备份
+
+================================================================================
+ 附录 B  移植执行记录（2026-11-02 20:30）
+================================================================================
+  已完成
+   [x] Step 3  模板导出 app/src/main/assets/glyph/tmpl.bin（6152B，sha256 732e615a…）
+   [x] Step 4  GlyphBank.kt（172 行）+ GlyphScan.kt（约 700 行）
+   [x] Step 5  接入 CornerTask：glyph 模式整块扫描，命中直接点，不跑提案器/CNN
+   [x] Step 6  三开关：K.SCAN_MODE* + RuleStore.scanMode + SkipService 两道闸门
+                + CornerTask 帧首自退 + MainActivity「识别方式」卡片
+   [x] Step 7  1s 节流：CornerTask 帧首 MIN_SCAN_INTERVAL_MS（首帧不节流）
+   [x] 编译通过  ./gradlew assembleDebug → app-debug.apk（30.9 MB）
+
+  改动文件清单
+    app/src/main/java/com/v5yn133n3/skp/engine/GlyphBank.kt     新增
+    app/src/main/java/com/v5yn133n3/skp/engine/GlyphScan.kt     新增
+    app/src/main/java/com/v5yn133n3/skp/engine/CornerTask.kt    行 208-227 三档；
+                                                                行 512-520 节流；
+                                                                行 534-600 glyph 分支；
+                                                                行 313-317 帧首模式自退
+    app/src/main/java/com/v5yn133n3/skp/engine/SkipService.kt   行 373 / 557 两道闸门
+    app/src/main/java/com/v5yn133n3/skp/data/RuleStore.kt        行 26 / 290 / 299
+    app/src/main/java/com/v5yn133n3/skp/K.kt                     行 56-59 / 67
+    app/src/main/java/com/v5yn133n3/skp/ui/MainActivity.kt       识别方式卡片（OCR识别之前）
+    app/src/main/java/com/v5yn133n3/skp/ui/ImageTestActivity.kt  glyph 模式的图片测试入口
+
+  ★ 与计划的两处偏离（都是被编译/作用域逼出来的）
+    1) glyph 分支不再复用 tile 循环的点击代码，而是自己写一段精简点击
+       （gate + 前台校验 + 冷却 + gestureTap + markHit）。
+       原因：那段代码嵌在 tile 循环里，坐标系是「瓦片局部 ×2」，强行注入会让
+       bx/by 出现 ±2px 换算误差，且控制流（continue@tile / break@loop）无法复用。
+       代价：暂时没有 tapRegion/verifyTap 的「点空复查」，先看真机有没有点空。
+    2) 原计划 REFINE_TRIGGER 提到 0.58，代码里**暂时保持 0.50**。
+       原因：Kotlin 归一化（面积平均）与 Python 的 LANCZOS 有差异，分数分布可能
+       整体偏移；先按同阈值跑通，真机比对后再定，避免两个变量一起动。
+
+  下一步（真机）
+   1) 装 app-debug.apk（真机 a16）
+   2) 首页「识别方式」选 OCR 模式 → 进「全屏图片测试」选一张带跳过的截图
+      → 期望：标出 1 个绿框，p≈0.70-0.79
+   3) 对照 Python：同图 combo 差 ≤0.05 视为移植正确；<0.55 说明归一化有问题
+   4) 看 logcat：`SkipGlyph` 的 hit 行有 combo/跳/过/ms/pass，
+      以及 `hit kind=CORNER ... glyph cell=3 ... ms=xxx`
+   5) 三个模式各跑一次，确认日志里 node/ocr 通道互不串
+
+================================================================================
+ 附录 A  回归结果（Step 1）
+================================================================================
+  run_mp.py，12 进程，28 张
+    images=28  hit=28  wall=250.8s
+    新增命中：01-24-33  cell=3  box=(917,127,995,164)  combo=0.772
+              跳=0.772(msyhbd)  过=0.772(msyhbd)
+              与相邻帧真值 (921,128,996,164) 差 ≤4px
+    其余 27 张 box/combo 与上一轮一致（0.703–0.790），无误报
+  耗时：单图 32s → 70s（Python，变体×3 + refine80 暴涨）；端上见第三节
+
+  模板资产已生成（Step 3 完成）
+    app/src/main/assets/glyph/tmpl.bin   6152 B
+    sha256 732e615a67205989d9395a6c818979b63c7829466aadb48f99ead5631a2fb7e5
