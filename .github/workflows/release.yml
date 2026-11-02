@@ -26,14 +26,14 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: 取源码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # 标签注释就是发布说明，要拿到完整历史
           fetch-depth: 0
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: 装 JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
