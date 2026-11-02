@@ -1,0 +1,80 @@
+name: release
+
+# 推一个 v* 标签就自动出包并建 Release，不用再手工跑 make_release.py。
+# 已经推过的标签要补发：Actions 页面点 Run workflow，填标签名即可。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '已有标签名（如 v1.2），重新出包'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: 取源码
+        uses: actions/checkout@v4
+        with:
+          # 标签注释就是发布说明，要拿到完整历史
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: 装 JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Gradle 缓存
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 解析标签与发布说明
+        id: meta
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # 注释标签的正文（去掉首行版本号）当发布说明
+          git tag -l --format='%(contents:body)' "$tag" > notes.md
+          if [ ! -s notes.md ]; then
+            git log -1 --format='%s%n%n%b' HEAD > notes.md
+          fi
+          echo "---- notes ----"
+          cat notes.md
+
+      - name: 出包（随机包名 + 随机签名）
+        run: |
+          chmod +x gradlew
+          python3 tools/make_release.py
+          ls -l releases/
+
+      - name: 建 Release 并上传 APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          apk="$(ls releases/*.apk | head -1)"
+          test -f "$apk" || { echo "没找到发布包"; exit 1; }
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，覆盖上传"
+            gh release upload "$TAG" "$apk" --clobber
+          else
+            gh release create "$TAG" "$apk" \
+              --title "$TAG" \
+              --notes-file notes.md \
+              --verify-tag
+          fi
+          gh release view "$TAG" --json tagName,assets \
+            --jq '.tagName + " " + (.assets[] | .name + " " + (.size|tostring) + "B")'
