@@ -46,8 +46,8 @@ jobs:
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          # 注释标签的正文（去掉首行版本号）当发布说明
-          git tag -l --format='%(contents:body)' "$tag" > notes.md
+          # 注释标签的正文（去掉首行版本号）当发布说明；正文为空则退回提交信息
+          git tag -l --format='%(contents:body)' "$tag" | sed '/^[[:space:]]*$/d' > notes.md
           if [ ! -s notes.md ]; then
             git log -1 --format='%s%n%n%b' HEAD > notes.md
           fi
@@ -85,3 +85,14 @@ jobs:
           fi
           gh release view "$TAG" --json tagName,assets \
             --jq '.tagName + " " + (.assets[] | .name + " " + (.size|tostring) + "B")'
+
+      - name: 清理
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          # 随机密钥、构建中间件只服务这一次打包，跑完就删
+          rm -rf build/random-signing app/build/outputs/apk/release
+          n=$(gh release view "$TAG" --json assets --jq '.assets | length')
+          echo "Release $TAG 资产数：$n"
+          [ "$n" -eq 1 ] || { echo "一个 Release 只该挂一个包，实际 $n 个"; exit 1; }

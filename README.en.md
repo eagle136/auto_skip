@@ -113,6 +113,10 @@ the release notes) and `.github/workflows/release.yml` runs the same `tools/make
 ubuntu, then attaches the APK to the Release of the same name — one asset per Release. To backfill an
 older tag, open Actions → `release` → `Run workflow` and enter the tag name.
 
+Every trigger generates a fresh package name; when the build finishes the random key and the build
+intermediates are deleted, leaving only the artifact in `releases/`. Pass `--keep-signing` if you need
+to keep the key around to re-sign the same package.
+
 That is deliberate: package name and signing fingerprint are an app's identity on a device, and a
 fixed identity is an identity that can be recognized and traced.
 

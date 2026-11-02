@@ -4,6 +4,10 @@
 用法：
     python tools/make_release.py                # 随机包名 + 随机密钥，产出到 releases/
     python tools/make_release.py --no-build     # 只生成密钥与包名，不调 gradle
+    python tools/make_release.py --keep-signing # 保留本次密钥，便于对同一个包重签
+
+每次触发都换一个新的 applicationId；打包结束后随机密钥与构建中间件一律删掉，
+只留 releases/ 里的成品（目录里也只保留最新的一个包）。
 
 为什么要随机：
     包名与签名指纹是该应用在任何设备上的身份。固定身份意味着可以被按身份识别、
@@ -88,6 +92,8 @@ def gradle_cmd() -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-build", action="store_true", help="只生成身份，不构建")
+    ap.add_argument("--keep-signing", action="store_true",
+                    help="保留本次随机密钥（默认打包完即删）")
     ap.add_argument("--seed", type=int, default=None, help="固定随机种子（调试用）")
     args = ap.parse_args()
 
@@ -158,7 +164,16 @@ def main() -> int:
     size_mb = out.stat().st_size / 1024 / 1024
     print(f"[4/4] {out.relative_to(ROOT)}  ({size_mb:.2f} MB)")
     print(f"      applicationId = {pkg}")
-    print(f"      签名口令/别名见上方生成值（不入库，下次发布即换新）")
+
+    # 4. 收尾：随机密钥与构建中间件只用这一次，打包完就删。
+    #    留着没有任何好处 —— 下次发布本来就会换新身份，反倒容易被误拿去重签。
+    if args.keep_signing:
+        print(f"      --keep-signing：保留 {ks.relative_to(ROOT)}")
+    else:
+        for leftover in SIGN_DIR.glob("*.jks"):
+            leftover.unlink()
+        shutil.rmtree(apk.parent, ignore_errors=True)
+        print("      已清理随机签名与构建中间件（只留 releases/ 里的成品）")
     return 0
 
 
