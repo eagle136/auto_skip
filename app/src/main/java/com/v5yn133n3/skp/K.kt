@@ -48,6 +48,53 @@ object K {
     const val CORNER_MODE = "corner_mode"
 
     /**
+     * 识别方式（通道级）：只跑无障碍 / 只跑 OCR / 并发。
+     *
+     * 与每包的应用开关是两件事：应用开关决定「这个包要不要接管」，
+     * 这里决定「接管后走哪条路」。测试三个档位不用重新打包。
+     */
+    const val SCAN_MODE = "scan_mode"
+    const val SCAN_MODE_NODE = "node"     // 只跑无障碍节点
+    const val SCAN_MODE_OCR = "ocr"       // 只跑四角画面识别
+    const val SCAN_MODE_BOTH = "both"     // 并发（默认 = 原行为）
+
+    /**
+     * 「默认并发」的一次性迁移标记。
+     *
+     * 测试期把 scan_mode 存成过 ocr/node，光改 getter 默认值对那些机器无效；
+     * 带这个标记跑一次强制写回 both。
+     */
+    const val SCAN_MODE_RESET = "scan_mode_reset_v1"
+
+    /**
+     * 详细日志开关，**默认关**。
+     *
+     * 关掉时整个识别链路一条日志都不打（连 logcat 都没有），遇到问题在首页打开，
+     * 同时开始往 `files/log/engine.log` 追加环形缓冲，配合「导出日志」一起发出去。
+     */
+    const val DEBUG_LOG = "debug_log"
+
+    /**
+     * 两帧之间至少间隔这么久。测试版口径是「1s 内最多识别 1 次」。
+     *
+     * 原来高频档靠截图 170ms 天然限速，一帧约 360ms（≈3 帧/秒），远超这个口径；
+     * 首帧不节流 —— 切应用后第一次必须马上出结果。
+     */
+    const val MIN_SCAN_INTERVAL_MS = 1_000L
+
+    /**
+     * 字形匹配的判定阈值（首页滑条可调）。
+     *
+     * 为什么必须可调：TTF 字模和真机字体的 IoU 上限只有 0.85 左右，实测命中
+     * 集中在 0.70–0.79。阈值钉死在 0.62 等于把「收紧误报」这条路堵死了 ——
+     * 提到 0.72 会连真按钮一起丢掉。给一条滑条，让现场按误报情况自己找平衡点。
+     */
+    const val GLYPH_GATE = "glyph_gate"
+    const val GLYPH_GATE_MIN = 0.50f
+    const val GLYPH_GATE_MAX = 0.85f
+    const val GLYPH_GATE_DEFAULT = 0.62f
+
+    /**
      * 每包 OCR 识别开关（应用列表右侧的那一颗）。
      *
      * 与 [SERVICE_ON]（无障碍）**同开同关**，由 `RuleStore.setAppOn` 同时写两个键：

@@ -8,6 +8,7 @@ import java.nio.ByteOrder
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.sqrt
+import com.v5yn133n3.skp.Logs
 
 /**
  * 第二级：把候选框缩到 96×32 过三层卷积，输出「是跳过」的概率（阈值 0.9）。
@@ -76,7 +77,7 @@ object SkipNet {
             val n = bytes.size / 4
             if (n != TOTAL) {
                 lastError = "权重 $n 个 float，期望 $TOTAL"
-                Log.w(TAG, lastError)
+                Logs.w(TAG, lastError)
                 return false
             }
             // export 顺序：c0.w c0.b c1.w c1.b c2.w c2.b f.w f.b，顺序读即可
@@ -91,16 +92,16 @@ object SkipNet {
             fb = FloatArray(2).also { fl.get(it) }
             if (fl.hasRemaining()) {
                 lastError = "权重尾部多出 ${fl.remaining()} 个 float"
-                Log.w(TAG, lastError)
+                Logs.w(TAG, lastError)
                 return false
             }
             ready = true
             lastError = ""
-            Log.i(TAG, "ready params=$TOTAL")
+            Logs.i(TAG, "ready params=$TOTAL")
             true
         } catch (e: Throwable) {
             lastError = "权重加载失败：${e.message}"
-            Log.w(TAG, lastError)
+            Logs.w(TAG, lastError)
             false
         }
     }
@@ -150,7 +151,7 @@ object SkipNet {
                 scoreRobust(f, 0, 0, 44, 44, rescue = true)
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "warmup 失败 ${e.javaClass.simpleName}: ${e.message}")
+            Logs.w(TAG, "warmup 失败 ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
@@ -367,7 +368,7 @@ object SkipNet {
         val d0 = abs(logits[0] - 16.256311f)
         val d1 = abs(logits[1] + 16.270863f)
         val msg = "selftest logits=${logits[0]},${logits[1]} maxdiff=${maxOf(d0, d1)}"
-        Log.i(TAG, msg)
+        Logs.i(TAG, msg)
         return msg
     }
 }

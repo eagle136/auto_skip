@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.random.Random
+import com.v5yn133n3.skp.Logs
 
 /**
  * 任务基类，逐条对应旧版 LttService.g。
@@ -106,7 +107,7 @@ abstract class SkipTask(
             }
         }
         if (clicked.isEmpty()) {
-            Log.i(SkipService.TAG, "miss kind=$kind pkg=$pkgName " +
+            Logs.i(SkipService.TAG, "miss kind=$kind pkg=$pkgName " +
                 "elapsed=${SystemClock.uptimeMillis() - start}ms window=${timeoutMs}ms")
         }
     }
@@ -121,7 +122,7 @@ abstract class SkipTask(
         val h = r.height()
         // 框有多大、点落在哪，必须写进日志：用户报「框太大、点不准」时，
         // 之前只能靠截图猜，截图上又看不到节点框（节点路不画 Mark）。
-        Log.i(
+        Logs.i(
             SkipService.TAG,
             "hit kind=$kind pkg=$pkgName way=$way how=$lastHow dt=${dt}ms nap=${lastNapMs}ms " +
                 "box=${r.left},${r.top},${r.right},${r.bottom} ${w}x$h" +

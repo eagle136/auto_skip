@@ -1,6 +1,7 @@
 package com.v5yn133n3.skp.engine
 
 import android.util.Log
+import com.v5yn133n3.skp.Logs
 
 /**
  * 最近一轮扫带任务的开销，日志里一行、主页上显示同一行。
@@ -45,7 +46,7 @@ object CornerStats {
             "模型${if (modelCalls > 0) (modelMs / modelCalls).toString() else "-"}ms/次×$modelCalls " +
             "最慢${maxFrameMs}ms 共${totalMs}ms ${if (hit) "命中" else "未中"}"
         line = text
-        Log.i(
+        Logs.i(
             SkipService.TAG,
             "cost kind=CORNER pkg=$pkg frames=$frames tiles=$tiles cap=${capMs / f}ms " +
                 "scan=${scanMs / f}ms model=${if (modelCalls > 0) modelMs / modelCalls else 0}ms " +

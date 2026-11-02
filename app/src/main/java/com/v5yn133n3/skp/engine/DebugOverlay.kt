@@ -13,6 +13,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import com.v5yn133n3.skp.Logs
 
 /**
  * 调试悬浮窗：把扫带那一刻「提案器提出的框 + 模型打分」直接画在屏幕上。
@@ -108,7 +109,7 @@ object DebugOverlay {
             added = true
             v
         } catch (e: Throwable) {
-            Log.w(TAG, "addView failed: ${e.message}")
+            Logs.w(TAG, "addView failed: ${e.message}")
             null
         }
     }

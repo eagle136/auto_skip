@@ -22,6 +22,9 @@ object RuleStore {
     const val CORNER_MODE_MODEL = "model"
     const val CORNER_MODE_PIXEL = "pixel"
 
+    /** 字形匹配（GlyphScan）：不用 CNN，直接和 TTF 字模做 IoU。默认档。 */
+    const val CORNER_MODE_GLYPH = "glyph"
+
     /**
      * 系统壳：没有广告，点了就是搜索/弹窗/设置。桌面与输入法另外动态判定。
      *
@@ -71,6 +74,13 @@ object RuleStore {
             global.edit()
                 .putBoolean(K.DEBUG_OVERLAY, false)
                 .putBoolean(K.DEBUG_OVERLAY_RESET, true)
+                .apply()
+        }
+        // 默认并发：测试期存过 node/ocr，这一版强制写回一次 both
+        if (!global.getBoolean(K.SCAN_MODE_RESET, false)) {
+            global.edit()
+                .putString(K.SCAN_MODE, K.SCAN_MODE_BOTH)
+                .putBoolean(K.SCAN_MODE_RESET, true)
                 .apply()
         }
     }
@@ -283,14 +293,47 @@ object RuleStore {
         get() = global.getBoolean(K.CORNER_ON, true)
         set(value) = global.edit().putBoolean(K.CORNER_ON, value).apply()
 
+    /**
+     * OCR 内部识别器：**已锁定为字形匹配**（2026-11-02）。
+     *
+     * 首页的「OCR 引擎」选择框已移除：模型（CNN）误报率 90%、纯像素认不出字，
+     * 留着三条路只会让人选错档然后得出「OCR 不工作」的结论。getter 恒返回
+     * [CORNER_MODE_GLYPH]，旧数据里存着的 "model"/"pixel" 一律不再生效；
+     * setter 保留成空实现，只为不让老调用点编译不过。
+     */
     var cornerMode: String
-        get() = global.getString(K.CORNER_MODE, CORNER_MODE_MODEL) ?: CORNER_MODE_MODEL
-        set(value) = global.edit().putString(K.CORNER_MODE, value).apply()
+        get() = CORNER_MODE_GLYPH
+        set(@Suppress("UNUSED_PARAMETER") value: String) {
+            // 锁定，不接受写入
+        }
+
+    /**
+     * 识别方式：只跑无障碍 / 只跑 OCR / 并发。
+     *
+     * 这是**通道级**开关，和 [cornerMode]（OCR 内部用哪个识别器）不是一回事。
+     * 每次事件现读，不做缓存 —— 首页一改就要立刻生效，不能等重启服务。
+     */
+    var scanMode: String
+        get() = global.getString(K.SCAN_MODE, K.SCAN_MODE_BOTH) ?: K.SCAN_MODE_BOTH
+        set(value) = global.edit().putString(K.SCAN_MODE, value).apply()
 
     /**
      * 单次识别时长（秒），首页滑条口径 4–10，**默认 6**。
      * 到点就停手，等下一次**真正的应用切换**再重新计时。
      */
+    /**
+     * 字形匹配阈值。每次扫描现读，滑条一拖下一帧就生效。
+     *
+     * 0.50 → 极端宽松（召回最高，可能误报）；0.62 默认（实测 28/28、0 误报）；
+     * 0.80 以上基本不会再触发真按钮（真机字体和 TTF 字模差太多）。
+     */
+    var glyphGate: Float
+        get() = global.getFloat(K.GLYPH_GATE, K.GLYPH_GATE_DEFAULT)
+            .coerceIn(K.GLYPH_GATE_MIN, K.GLYPH_GATE_MAX)
+        set(value) = global.edit()
+            .putFloat(K.GLYPH_GATE, value.coerceIn(K.GLYPH_GATE_MIN, K.GLYPH_GATE_MAX))
+            .apply()
+
     var cornerTimeoutSec: Int
         get() = global.getInt(K.CORNER_TIMEOUT_SEC, K.CORNER_TIMEOUT_DEFAULT_S)
             .coerceIn(K.CORNER_TIMEOUT_MIN_S, K.CORNER_TIMEOUT_MAX_S)
@@ -322,6 +365,16 @@ object RuleStore {
     var debugOverlay: Boolean
         get() = global.getBoolean(K.DEBUG_OVERLAY, false)
         set(value) = global.edit().putBoolean(K.DEBUG_OVERLAY, value).apply()
+
+    /**
+     * 详细日志开关，**默认关**。
+     *
+     * 关 = 识别链路一条日志都不打，导出也拿不到东西（会提示先打开）；
+     * 开 = 同时写 logcat 与 `files/log/engine.log`，供「导出日志」打包。
+     */
+    var debugLog: Boolean
+        get() = global.getBoolean(K.DEBUG_LOG, false)
+        set(value) = global.edit().putBoolean(K.DEBUG_LOG, value).apply()
 
     /** 守护 ELF 实际落脚的目录，安装成功时记下，状态读取与卸载都用它。 */
     var daemonBinDir: String

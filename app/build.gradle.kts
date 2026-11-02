@@ -48,8 +48,8 @@ android {
         applicationId = appId
         minSdk = 35
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
         // 验收机是 arm64 单 ABI；ELF 分支里的守护二进制同样只有 arm64
         ndk { abiFilters += listOf("arm64-v8a") }
     }

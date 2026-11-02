@@ -8,5 +8,6 @@ class SkipApp : Application() {
     override fun onCreate() {
         super.onCreate()
         RuleStore.init(this)
+        Logs.init(this)
     }
 }

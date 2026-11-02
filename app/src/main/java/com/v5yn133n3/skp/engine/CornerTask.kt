@@ -12,6 +12,7 @@ import com.v5yn133n3.skp.priv.FgWatch
 import com.v5yn133n3.skp.priv.Mode
 import com.v5yn133n3.skp.priv.Shell
 import kotlin.random.Random
+import com.v5yn133n3.skp.Logs
 
 /**
  * 第四类任务：扫带 → 瓦片内找文本行 → 小模型确认 → 点框中心。
@@ -150,7 +151,7 @@ class CornerTask(
         rearmCount++
         lastRearmAt = now
         session++
-        Log.i(SkipService.TAG, "rearm kind=CORNER pkg=$pkg src=$src")
+        Logs.i(SkipService.TAG, "rearm kind=CORNER pkg=$pkg src=$src")
         return true
     }
 
@@ -178,7 +179,7 @@ class CornerTask(
                 doRun()
                 break
             } catch (e: Throwable) {
-                Log.w(SkipService.TAG,
+                Logs.w(SkipService.TAG,
                     "err kind=CORNER pkg=$pkg ${e.javaClass.simpleName}: ${e.message}")
                 try {
                     Thread.sleep(500)
@@ -194,22 +195,31 @@ class CornerTask(
         val ctx = svc.applicationContext
         val mode = Mode.of(RuleStore.privMode)
         if (mode == Mode.NONE) {
-            Log.i(SkipService.TAG, "miss kind=CORNER reason=no-priv mode=NONE")
+            Logs.i(SkipService.TAG, "miss kind=CORNER reason=no-priv mode=NONE")
             svc.noteCornerFail()
             CornerStats.report(pkg, 0, 0, 0, 0, 0, 0, 0, false, "no-priv")
             return
         }
         if (!Shell.available(ctx, mode)) {
-            Log.i(SkipService.TAG, "miss kind=CORNER reason=priv-blocked ${Shell.unavailableReason(mode)}")
+            Logs.i(SkipService.TAG, "miss kind=CORNER reason=priv-blocked ${Shell.unavailableReason(mode)}")
             svc.noteCornerFail()
             CornerStats.report(pkg, 0, 0, 0, 0, 0, 0, 0, false, "priv-blocked")
             return
         }
-        val useModel = RuleStore.cornerMode != RuleStore.CORNER_MODE_PIXEL
+        // OCR 内部三档：glyph（字形匹配，默认）/ model（旧 CNN）/ pixel（纯启发性）
+        val cornerMode = RuleStore.cornerMode
+        val useGlyph = cornerMode == RuleStore.CORNER_MODE_GLYPH
+        val useModel = cornerMode == RuleStore.CORNER_MODE_MODEL
         if (useModel && !SkipNet.prepare(ctx)) {
-            Log.i(SkipService.TAG, "miss kind=CORNER reason=model-unavailable ${SkipNet.lastError}")
+            Logs.i(SkipService.TAG, "miss kind=CORNER reason=model-unavailable ${SkipNet.lastError}")
             svc.noteCornerFail()
             CornerStats.report(pkg, 0, 0, 0, 0, 0, 0, 0, false, "model-unavailable")
+            return
+        }
+        if (useGlyph && !GlyphBank.load(ctx)) {
+            Logs.i(SkipService.TAG, "miss kind=CORNER reason=glyph-unavailable ${GlyphBank.lastError}")
+            svc.noteCornerFail()
+            CornerStats.report(pkg, 0, 0, 0, 0, 0, 0, 0, false, "glyph-unavailable")
             return
         }
         // 任务启动再烫一次：服务连接后可能过了几小时，JIT 热点早凉了。
@@ -223,7 +233,7 @@ class CornerTask(
         var start = if (fromEvent) eventTime else wokenAt
         // 事件 → 任务真正开跑 的排队延迟（线程池 + 冷却）。和 first 那条一起看，
         // 就能把「起任务慢」和「画面还没出来」分开。
-        Log.i(SkipService.TAG,
+        Logs.i(SkipService.TAG,
             "begin kind=CORNER pkg=$pkg sinceEvent=" +
                 (if (eventTime > 0) wokenAt - eventTime else -1L) + "ms " +
                 "anchor=${if (fromEvent) "event" else "wake"}")
@@ -234,7 +244,7 @@ class CornerTask(
         // 否则 old 值一直生效，用户看到的就是「关了还照画」。
         var canDraw = RuleStore.debugOverlay && DebugOverlay.canDraw(svc)
         if (RuleStore.debugOverlay && !canDraw) {
-            Log.w(SkipService.TAG, "debug overlay on but no SYSTEM_ALERT_WINDOW, marks disabled")
+            Logs.w(SkipService.TAG, "debug overlay on but no SYSTEM_ALERT_WINDOW, marks disabled")
         }
         val marks = ArrayList<DebugOverlay.Mark>(12)
 
@@ -254,6 +264,7 @@ class CornerTask(
         var hit = false
         var hitCount = 0
         var lastHitAt = 0L
+        var lastScanAt = 0L
         var nodeHoldUntil = 0L
         var capFail = 0
         // 被实心块闸门丢掉的候选数，随 miss 日志一起打：它高说明这一屏全是头像/图标，
@@ -306,6 +317,11 @@ class CornerTask(
         try {
             while (!cancelled) {
                 tick++
+                // 识别方式切到「只跑无障碍」：常驻任务下一帧自己退，不用静态引用去 kill
+                if (RuleStore.scanMode == K.SCAN_MODE_NODE) {
+                    reason = "mode-node"
+                    break
+                }
                 // ⓪ 调试开关现场同步：任务常驻，设置页一关就要立刻撤框、停止再画。
                 val drawNow = RuleStore.debugOverlay && DebugOverlay.canDraw(svc)
                 if (!drawNow && canDraw) {
@@ -325,7 +341,7 @@ class CornerTask(
                     } else {
                         nowAt
                     }
-                    Log.i(SkipService.TAG,
+                    Logs.i(SkipService.TAG,
                         "timer-reset kind=CORNER pkg=$pkg lag=${nowAt - start}ms")
                     // 换应用时重读一次滑条值：用户可能刚在首页把 4s 调成 10s
                     timeoutMs = RuleStore.cornerTimeoutMs
@@ -344,7 +360,7 @@ class CornerTask(
                     capFail = 0
                     idle = false
                     svc.resetWindowHit()
-                    Log.i(SkipService.TAG,
+                    Logs.i(SkipService.TAG,
                         "switch-to kind=CORNER pkg=$pkg session=$session timeout=${timeoutMs}ms " +
                             "delay=${delayMs}ms")
                 }
@@ -363,7 +379,7 @@ class CornerTask(
                         } else if (!paused) {
                             paused = true
                             pausedBy = cur
-                            Log.i(SkipService.TAG, "pause kind=CORNER pkg=$pkg now=$cur")
+                            Logs.i(SkipService.TAG, "pause kind=CORNER pkg=$pkg now=$cur")
                         }
                     } else if (cur == pkg && paused) {
                         // 回来前先确认这个包**还在 OCR 名单里**：用户可能刚在应用列表把
@@ -371,7 +387,7 @@ class CornerTask(
                         // 里每 600ms 空转没有意义，watchdog 会在它被切回 OCR 时重建。
                         if (!RuleStore.isCornerTarget(pkg)) {
                             reason = "mode-off"
-                            Log.i(SkipService.TAG, "exit kind=CORNER pkg=$pkg reason=mode-off")
+                            Logs.i(SkipService.TAG, "exit kind=CORNER pkg=$pkg reason=mode-off")
                             break
                         }
                         paused = false
@@ -385,7 +401,7 @@ class CornerTask(
                             start = SystemClock.uptimeMillis()
                             scanStart = start + delayMs
                             idle = false
-                            Log.i(SkipService.TAG,
+                            Logs.i(SkipService.TAG,
                                 "resume kind=CORNER pkg=$pkg wasPausedBy=$by")
                         }
                     }
@@ -413,10 +429,13 @@ class CornerTask(
                 // 节点路刚点过 → 让位 2 秒。它点的很可能就是同一颗「跳过」：旧画面还会
                 // 停留一瞬，四角能在这张图上找到同一颗按钮的另一个切框（位置差几十像素，
                 // 同位置冷却拦不住），不让位就是补第二发 = 双点。
-                if (svc.nodeHitRecently()) {
+                // **只跑 OCR 时整段跳过**：节点路根本没下发，nodeHitAt 是上一轮 both 模式
+                // 留下的残值。真机 2026-11-02 就是这么卡住的 —— 切到 OCR 后每次触发
+                // 前 2 秒全被这条 sleep(300) 空转吃掉，4 秒窗口只剩一半，看起来「不工作」。
+                if (RuleStore.scanMode != K.SCAN_MODE_OCR && svc.nodeHitRecently()) {
                     if (nodeHoldUntil == 0L) {
                         nodeHoldUntil = SystemClock.uptimeMillis()
-                        Log.i(SkipService.TAG, "hold kind=CORNER pkg=$pkg reason=node-hit")
+                        Logs.i(SkipService.TAG, "hold kind=CORNER pkg=$pkg reason=node-hit")
                     }
                     sleep(300)
                     continue
@@ -431,9 +450,10 @@ class CornerTask(
                 if (elapsedNow > timeoutMs || clickedEnough) {
                     if (reason != "idle-timeout") {
                         reason = "idle-timeout"
-                        Log.i(SkipService.TAG,
+                        Logs.i(SkipService.TAG,
                             "idle kind=CORNER pkg=$pkg frames=$frames hits=$hitCount " +
                                 "elapsed=${elapsedNow}ms limit=${timeoutMs}ms " +
+                                "best=${String.format("%.2f", GlyphScan.lastBest)} " +
                                 "why=${if (clickedEnough) "clicked" else "timeout"}")
                         // 最后一帧的框必须撤掉：留着会让人以为「还在扫」
                         if (canDraw) DebugOverlay.hide()
@@ -473,7 +493,7 @@ class CornerTask(
                     // 不加这道，「设 4s」会被一帧慢截图拖成 6.7s。
                     reason = "timeout"
                     if (canDraw) DebugOverlay.hide()
-                    Log.i(SkipService.TAG,
+                    Logs.i(SkipService.TAG,
                         "idle kind=CORNER pkg=$pkg frames=$frames hits=$hitCount " +
                             "elapsed=${SystemClock.uptimeMillis() - scanStart}ms " +
                             "limit=${timeoutMs}ms why=slow-cap")
@@ -489,7 +509,7 @@ class CornerTask(
                     if (capFail >= 5) {
                         // 连续 5 次都截不到 → 退回长睡重试，**不退任务**。
                         // 任务一退，同包里再弹的东西就没人管了。
-                        Log.w(SkipService.TAG, "capture stalled pkg=$pkg ${Capture.lastError}")
+                        Logs.w(SkipService.TAG, "capture stalled pkg=$pkg ${Capture.lastError}")
                         capFail = 0
                         sleep(5000)
                         continue
@@ -501,8 +521,98 @@ class CornerTask(
                 frames++
                 if (canDraw) marks.clear()
 
+                // 测试版口径：1s 内最多识别 1 次。首帧不节流（切应用要立刻出结果）。
+                // 放在两条路分叉之前，glyph 分支的 continue 也绕不过它。
+                if (frames > 1) {
+                    val gap = K.MIN_SCAN_INTERVAL_MS - (SystemClock.uptimeMillis() - lastScanAt)
+                    if (gap > 0) sleep(gap)
+                }
+                lastScanAt = SystemClock.uptimeMillis()
+
                 val tScan = SystemClock.uptimeMillis()
                 var frameModelMs = 0L
+
+                /*
+                 * glyph 模式：整块扫描直接替代「提案器 + 实心块闸门 + CNN」。
+                 *
+                 * 为什么不复用提案器：它按 160x100 瓦片找连通域，细白字被光带/高亮
+                 * 黏住时一个框都出不来（01-24-33 那张真机就是这么漏的）。字形匹配
+                 * 自己在四角找「跳+过」，不依赖上游给框。
+                 *
+                 * 代价：每帧一次全角扫描（估算 30-80ms），1s 节流下可以忽略。
+                 */
+                if (useGlyph) {
+                    val gh = GlyphScan.scan(ctx, frame)
+                    scanMs += SystemClock.uptimeMillis() - tScan
+                    if (gh == null) {
+                        continue
+                    }
+                    val gw = gh.x1 - gh.x0
+                    val ghh = gh.y1 - gh.y0
+                    if (recentlyClicked(clicks, gh.x0, gh.y0, gw, ghh)) {
+                        continue
+                    }
+                    // 同上：OCR 模式没有节点路可让，这里直接判等会白退一次任务
+                    if (RuleStore.scanMode != K.SCAN_MODE_OCR && svc.nodeHitRecently()) break
+                    val gGate = CornerScan.gate(frame.width, frame.height, gh.cx, gh.cy)
+                    if (!gGate.pass(gw, ghh)) {
+                        // 必须打日志：字形命中了却被尺寸闸门丢掉，是这个项目最容易
+                        // 误判成「识别不工作」的一环（2026-11-02 就是这样，命中 70×33、
+                        // 闸门要求 90×26，4 秒窗口每帧都命中、每帧都丢，hits 恒为 0）。
+                        Logs.i(
+                            SkipService.TAG,
+                            "reject kind=CORNER pkg=$pkg why=small-box zone=${gGate.zone} " +
+                                "need=${gGate.minW}x${gGate.minH} got=${gw}x$ghh " +
+                                "box=${gh.x0},${gh.y0},${gh.x1},${gh.y1} " +
+                                "combo=${String.format("%.3f", gh.combo)}",
+                        )
+                        if (canDraw) {
+                            marks.add(
+                                DebugOverlay.Mark(
+                                    gh.x0, gh.y0, gw, ghh,
+                                    "字形 小框丢弃${gGate.zone} ${gw}x$ghh " +
+                                        "combo=${String.format("%.2f", gh.combo)}",
+                                    false, dim = true,
+                                ),
+                            )
+                        }
+                        continue
+                    }
+                    val curFg = FgWatch.current
+                    if (curFg != null && curFg != pkg) {
+                        Logs.i(
+                            SkipService.TAG,
+                            "abort kind=CORNER pkg=$pkg now=$curFg " +
+                                "at=${gh.cx},${gh.cy} reason=fg-changed",
+                        )
+                        break
+                    }
+                    // 走到这里就是「判定全过、要按下去」——这条日志必须存在，
+                    // 否则「有 hit 没点」和「压根没命中」在日志上长得一样。
+                    Logs.i(
+                        SkipService.TAG,
+                        "pick kind=CORNER pkg=$pkg box=${gh.x0},${gh.y0},${gh.x1},${gh.y1} " +
+                            "size=${gw}x$ghh zone=${gGate.zone} at=${gh.cx},${gh.cy} " +
+                            "combo=${String.format("%.3f", gh.combo)} fg=${curFg ?: "null"}",
+                    )
+                    lastNap = nap()
+                    svc.gestureTap(gh.cx, gh.cy)
+                    hitCount++
+                    hit = true
+                    lastHitAt = SystemClock.uptimeMillis()
+                    svc.markHit()
+                    Logs.i(
+                        SkipService.TAG,
+                        "hit kind=CORNER pkg=$pkg way=${K.CLICK_WAY_GESTURE} " +
+                            "glyph cell=${gh.cell} box=${gh.x0},${gh.y0},${gh.x1},${gh.y1} " +
+                            "combo=${String.format("%.3f", gh.combo)} " +
+                            "跳=${String.format("%.3f", gh.tiao)} " +
+                            "过=${String.format("%.3f", gh.guo)} pass=${gh.pass} " +
+                            "ms=${gh.ms} frames=$frames",
+                    )
+                    reason = "clicked"
+                    break
+                }
                 val halfW = frame.width / BandScan.SCALE
                 val halfH = frame.height / BandScan.SCALE
                 if (half.size < halfW * halfH) half = IntArray(halfW * halfH)
@@ -705,7 +815,7 @@ class CornerTask(
                     // 自己跳走了，此刻点下去就落在新页面上（r4 点进快搜就是这么来的）。
                     val cur = FgWatch.current
                     if (cur != null && cur != pkg) {
-                        Log.i(SkipService.TAG,
+                        Logs.i(SkipService.TAG,
                             "abort kind=CORNER pkg=$pkg now=$cur at=$x,$y reason=fg-changed")
                         break@loop
                     }
@@ -756,14 +866,14 @@ class CornerTask(
                     // 分段计时：cap=截图 scan=提案 model=推理 tap=手势注入。
                     // 用户报「广告播了 2s 才点」时要能一眼看出时间花在哪一段，
                     // 否则只能猜是「通知慢」还是「延迟大」。
-                    Log.i(SkipService.TAG,
+                    Logs.i(SkipService.TAG,
                         "hit kind=CORNER pkg=$pkg way=${K.CLICK_WAY_GESTURE} dt=${dt}ms " +
                             "nap=${lastNap}ms n=$hitCount tile=$t box=${bw}x${bh}@$x,$y " +
                             "frames=$frames p=${if (useModel) String.format("%.3f", p) else "px"} " +
                             "tap=$how seg=cap${cap1}/scan${SystemClock.uptimeMillis() - tScan - frameModelMs}" +
                             "/model${frameModelMs}/tap${tapMs} delay=${delayMs} " +
                             "half${hvMs}/plan${plMs}/propose${prMs}/chrome${chMs}/to$chromeTimeouts " +
-                            "mode=${if (useModel) "model" else "pixel"}")
+                            "mode=${if (useGlyph) "glyph" else if (useModel) "model" else "pixel"}")
                     // 命中框立刻显示（点完才画就晚了 1.2s），留 1.5s 方便肉眼核对。
                     if (canDraw) {
                         DebugOverlay.show(
@@ -794,7 +904,7 @@ class CornerTask(
                 // 每 5 帧一条心跳：把「已经扫了多久 / 截止在哪 / 画面动没动 / 这帧多慢」
                 // 一次打全。用户报「广告快播完才动」时，看这条就知道是收工了还是没框到。
                 if (frames % 5 == 0) {
-                    Log.i(SkipService.TAG,
+                    Logs.i(SkipService.TAG,
                         "beat kind=CORNER pkg=$pkg f=$frames " +
                             "elapsed=${SystemClock.uptimeMillis() - scanStart}ms " +
                             "stop=${timeoutMs}ms motion=$lastMotion " +
@@ -805,7 +915,7 @@ class CornerTask(
                 // 起任务慢、截图慢，还是画面还没出来（首帧就截到，但没候选）。
                 if (frames == 1) {
                     val sinceEvent = if (eventTime > 0) SystemClock.uptimeMillis() - eventTime else -1L
-                    Log.i(SkipService.TAG,
+                    Logs.i(SkipService.TAG,
                         "first kind=CORNER pkg=$pkg sinceEvent=${sinceEvent}ms " +
                             "frame=${frameMs}ms cap=${capMs}ms hot=${hot.size} tiles=${plan.size} " +
                             "loop=${SystemClock.uptimeMillis() - tScan - hvMs - plMs}ms " +
@@ -831,7 +941,7 @@ class CornerTask(
                 SystemClock.uptimeMillis() - start, hit, reason, tiles,
             )
         }
-        Log.i(SkipService.TAG,
+        Logs.i(SkipService.TAG,
             "miss kind=CORNER pkg=$pkg frames=$frames tiles=$tiles blocked=$blocked " +
                 "elapsed=${SystemClock.uptimeMillis() - start}ms " +
                 "best=${String.format("%.3f", bestP)}@$bestBox")
@@ -860,7 +970,7 @@ class CornerTask(
         if (tapDiff(before, f2, x, y) >= K.CORNER_TAP_VERIFY_DIFF) return "gesture-slow"
         // 两次都没动 → 这一下确实没被应用接受，用 InputManager 那条路补一次
         val r = Shell.run("input tap $x $y", mode, 1_500)
-        Log.w(SkipService.TAG,
+        Logs.w(SkipService.TAG,
             "tapretry kind=CORNER pkg=$pkg at=$x,$y shell=${if (r.ok) "ok" else "fail:${r.out.take(40)}"}")
         if (!r.ok) return "dead"
         sleep(320)

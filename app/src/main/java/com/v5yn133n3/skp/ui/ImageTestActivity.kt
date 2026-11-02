@@ -58,11 +58,13 @@ import androidx.core.content.ContextCompat
 import com.v5yn133n3.skp.data.RuleStore
 import com.v5yn133n3.skp.engine.BandScan
 import com.v5yn133n3.skp.engine.CornerScan
+import com.v5yn133n3.skp.engine.GlyphScan
 import com.v5yn133n3.skp.engine.SkipNet
 import com.v5yn133n3.skp.priv.Capture
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.v5yn133n3.skp.Logs
 
 /**
  * 全屏图片测试：拿一张和真机同尺寸的整屏截图，跑**和端上完全同一套**扫带链路
@@ -167,7 +169,7 @@ private fun TestScreen(initialUri: Uri? = null, modifier: Modifier = Modifier) {
                 status = "完成：${result.size} 个候选，$over 个过阈值，耗时 ${cost}ms"
                 verdict = verdictOf(result)
             } catch (e: Throwable) {
-                Log.w("SkipImageScan", "scan failed: ${e.message}", e)
+                Logs.w("SkipImageScan", "scan failed: ${e.message}", e)
                 status = "扫描失败：${e.javaClass.simpleName} ${e.message ?: ""}"
             } finally {
                 if (bmp == null && status == "解码…") status = "读不出这张图（未知原因）"
@@ -341,20 +343,54 @@ object ImageScan {
         /** 真机上会不会点：过阈值 + 不在状态栏 + 过小框护栏，三条全满足。 */
         val tap: Boolean,
     ) {
-        fun tag(): String = when {
-            guard -> "状态栏丢弃"
-            p < SkipNet.THRESHOLD -> if (p >= 0.5f) "接近" else "低分"
-            tap -> "会点"
-            else -> "小框丢(${gate.zone} 需${gate.minW}×${gate.minH})"
+        fun tag(): String {
+            // glyph 的合格线是 0.62（两字都 ≥0.62、均分 ≥0.68），不是 CNN 的 0.98
+            val thr = if (tile.startsWith("glyph")) 0.62f else SkipNet.THRESHOLD
+            return when {
+                guard -> "状态栏丢弃"
+                p < thr -> if (p >= 0.5f) "接近" else "低分"
+                tap -> "会点"
+                else -> "小框丢(${gate.zone} 需${gate.minW}×${gate.minH})"
+            }
         }
     }
 
+    /** 四角区宽 40%、高 25%，与 GlyphScan 的 CELL_W/H_RATIO 同一口径。 */
+    private const val CORNER_W = 0.40f
+    private const val CORNER_H = 0.25f
+
+    /** 瓦片中心是否落在四角之一（中间那一整条不扫）。 */
+    private fun inCorner(t: BandScan.Tile, w: Int, h: Int): Boolean {
+        val cx = t.x + BandScan.TW / 2
+        val cy = t.y + BandScan.TH / 2
+        val cw = (w * CORNER_W).toInt()
+        val ch = (h * CORNER_H).toInt()
+        val side = cx < cw || cx > w - cw
+        if (!side) return false
+        return cy < ch || cy > h - ch
+    }
+
     fun run(ctx: Context, bmp: Bitmap): List<Hit> {
+        val frame0 = toFrame(bmp)
+        // 字形匹配：图片测试也走真机同一套 GlyphScan，不另写一份判据
+        if (RuleStore.cornerMode == RuleStore.CORNER_MODE_GLYPH) {
+            val gh = GlyphScan.scan(ctx, frame0) ?: return emptyList()
+            val gw = gh.x1 - gh.x0
+            val ghh = gh.y1 - gh.y0
+            val g0 = CornerScan.gate(frame0.width, frame0.height, gh.cx, gh.cy)
+            val guard0 = statusBarHeight(ctx) > 0 && gh.y1 <= statusBarHeight(ctx)
+            return listOf(
+                Hit(
+                    "glyph c${gh.cell} p${gh.pass}", gh.x0, gh.y0, gw, ghh,
+                    gh.combo, guard0, g0, !guard0 && g0.pass(gw, ghh),
+                ),
+            )
+        }
         if (!SkipNet.prepare(ctx)) {
-            Log.w("SkipImageScan", "model unavailable: ${SkipNet.lastError}")
+            Logs.w("SkipImageScan", "model unavailable: ${SkipNet.lastError}")
             return emptyList()
         }
-        val frame = toFrame(bmp)
+        val frame = frame0
         val halfW = frame.width / BandScan.SCALE
         val halfH = frame.height / BandScan.SCALE
         val half = IntArray(halfW * halfH)
@@ -365,6 +401,10 @@ object ImageScan {
         val out = ArrayList<Hit>()
 
         for (t in BandScan.tiles(halfW, halfH)) {
+            // 图片测试也只扫四角，跟 glyph 路径、跟真机口径统一。
+            // 之前这里是全带（0–40% + 36–100%，基本覆盖整屏），一张淘宝图文页
+            // 要跑 20+ 块瓦片，十几秒都下不来；而「跳过」只可能出现在四角。
+            if (!inCorner(t, halfW, halfH)) continue
             BandScan.copyTile(half, halfW, t, BandScan.TW, BandScan.TH, tileLuma)
             val boxes = ArrayList<CornerScan.Box>(2)
             CornerScan.candidates(
@@ -443,7 +483,7 @@ private inline fun tryOnce(errs: MutableList<String>, tag: String, body: () -> B
         if (b == null) errs += "$tag=空"
         b
     } catch (e: Throwable) {
-        Log.w("SkipImageScan", "decode $tag failed: ${e.javaClass.simpleName} ${e.message}")
+        Logs.w("SkipImageScan", "decode $tag failed: ${e.javaClass.simpleName} ${e.message}")
         errs += "$tag=${e.javaClass.simpleName}"
         null
     }
@@ -501,7 +541,7 @@ private fun recentShots(context: Context, limit: Int = 12): List<Shot> {
             }
         }
     } catch (e: Throwable) {
-        Log.w("SkipImageScan", "query shots failed: ${e.javaClass.simpleName} ${e.message}")
+        Logs.w("SkipImageScan", "query shots failed: ${e.javaClass.simpleName} ${e.message}")
     }
     return out
 }
@@ -575,7 +615,7 @@ private fun applyExif(context: Context, uri: Uri, src: Bitmap): Bitmap {
             }
         }
     } catch (e: Throwable) {
-        Log.d("SkipImageScan", "exif skip: ${e.message}")
+        Logs.d("SkipImageScan", "exif skip: ${e.message}")
         0
     }
     if (deg == 0) return src

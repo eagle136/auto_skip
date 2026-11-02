@@ -34,6 +34,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import com.v5yn133n3.skp.Logs
 
 class SkipService : AccessibilityService() {
 
@@ -187,7 +188,7 @@ class SkipService : AccessibilityService() {
                 AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS  // 合计 82，与旧版 serviceInfo 一致
             notificationTimeout = 1
         }
-        Log.i(TAG, "service connected, pkg=${packageName}")
+        Logs.i(TAG, "service connected, pkg=${packageName}")
         // 权重只有 170 KB，但第一次要从 assets 读出来；顺带用固定输入验一遍移植
         // （logits 与 torch 差 >0.01 说明权重布局或卷积接错了）
         // 主页那个全局扫带开关已经删掉：扫带是否生效完全由「生效应用列表」里每包
@@ -202,7 +203,7 @@ class SkipService : AccessibilityService() {
             val m = Mode.of(RuleStore.privMode)
             if (m == Mode.ROOT) {
                 val ok = FgWatch.start(this, m) { pkg -> onFgChanged(pkg) }
-                Log.i(TAG, "fgwatch started=$ok")
+                Logs.i(TAG, "fgwatch started=$ok")
             }
         }
         mainHandler.removeCallbacks(watchdog)
@@ -303,25 +304,28 @@ class SkipService : AccessibilityService() {
         // 判定开关关掉的包两条路都不跑；打开后节点路在这里生成，四角路由
         // triggerCorner 同时拉起，两者互不排斥。
         if (!RuleStore.isAppOn(pkg)) {
-            Log.i(TAG, "switch pkg=$pkg 判定关闭，不生成节点任务")
+            Logs.i(TAG, "switch pkg=$pkg 判定关闭，不生成节点任务")
             return
         }
 
         val taskType = json.optInt(K.TASK_TYPE, K.TASK_TYPE_KEYWORD)
         val spawned = ArrayList<String>()
-        if (taskType and K.TASK_TYPE_KEYWORD != 0) {
+        // 只跑 OCR 时节点路整条不下发（spawn 内部也会拦），这里先判一次：
+        // 否则日志照样打 spawned=keyword，看日志的人会以为节点任务在跑。
+        val allowNode = RuleStore.scanMode != K.SCAN_MODE_OCR
+        if (allowNode && taskType and K.TASK_TYPE_KEYWORD != 0) {
             spawn(KeywordTask(this, json), event); spawned += "keyword"
         }
-        if (taskType and K.TASK_TYPE_TEXTS2 != 0) {
+        if (allowNode && taskType and K.TASK_TYPE_TEXTS2 != 0) {
             spawn(Texts2Task(this, json), event); spawned += "texts2"
         }
 
-        parsePaths(json).forEach { path ->
+        if (allowNode) parsePaths(json).forEach { path ->
             spawn(PathTask(this, json, path), event); spawned += "path"
         }
 
-        if (json.optJSONArray(K.POPUP_RULES) != null ||
-            json.optBoolean("filter_young_popups", false)
+        if (allowNode && (json.optJSONArray(K.POPUP_RULES) != null ||
+                json.optBoolean("filter_young_popups", false))
         ) {
             spawn(PopupTask(this, json), event); spawned += "popup"
         }
@@ -329,7 +333,7 @@ class SkipService : AccessibilityService() {
         // 四角：像素找框 → 小模型确认，与节点任务并行。需要截图通道，
         // 没通道时任务自己会记 miss reason=no-priv。目标应用判定见 RuleStore.isCornerTarget：
         // 它是按坐标点，落到桌面/输入法/设置上就是乱点。
-        Log.i(TAG, "switch pkg=$pkg task_type=$taskType spawned=${spawned.joinToString("+").ifEmpty { "none" }} " +
+        Logs.i(TAG, "switch pkg=$pkg task_type=$taskType spawned=${spawned.joinToString("+").ifEmpty { "none" }} " +
             "timeout=${json.optInt(K.TIMEOUT, K.DEFAULT_TIMEOUT_MS)}ms")
     }
 
@@ -364,9 +368,15 @@ class SkipService : AccessibilityService() {
             // 「出去再回来」才算新的一轮；否则同包回来会被当成没变、一帧都不扫。
             val had = lastCornerPkg != null
             lastCornerPkg = null
-            if (had || verbose) Log.i(TAG, "trigger src=$src pkg=$pkg skip=not-target")
+            // Log.v 而不是 i：冷启动/切桌面时这条一秒能刷十几条，把同 tag 下
+            // 真正有用的 hit / reject 挤到被 logd 限流丢掉（2026-11-02 排查时踩过）。
+            if (had || verbose) Logs.v(TAG, "trigger src=$src pkg=$pkg skip=not-target")
             return
         }
+        // 识别方式=只跑无障碍时，OCR 路不启动。
+        // 放在 isCornerTarget 那个 if 块**之后**：那块负责「离开目标应用时清
+        // lastCornerPkg」，提前 return 会让「出去再回来」不再算新一轮。
+        if (RuleStore.scanMode == K.SCAN_MODE_NODE) return
         val now = SystemClock.uptimeMillis()
         // 事件时刻只在「合理范围内」才当锚点：ELF 给的是 now、异常重启时可能给 0，
         // 超过 2s 说明这是一条迟到的旧事件，别拿它把计时器往回拨。
@@ -403,9 +413,9 @@ class SkipService : AccessibilityService() {
             val noisy = pkg == lastSameLogPkg && now - lastSameLogAt < 500
             lastSameLogPkg = pkg
             lastSameLogAt = now
-            if (!noisy) Log.i(TAG, "trigger src=$src pkg=$pkg state=same lag=${now - at}ms")
+            if (!noisy) Logs.v(TAG, "trigger src=$src pkg=$pkg state=same lag=${now - at}ms")
         } else if (verbose || state != "same") {
-            Log.i(TAG, "trigger src=$src pkg=$pkg state=$state lag=${now - at}ms")
+            Logs.i(TAG, "trigger src=$src pkg=$pkg state=$state lag=${now - at}ms")
         }
     }
 
@@ -498,7 +508,7 @@ class SkipService : AccessibilityService() {
             try {
                 ensureCornerAlive()
             } catch (e: Throwable) {
-                Log.w(TAG, "watchdog err ${e.javaClass.simpleName}: ${e.message}")
+                Logs.w(TAG, "watchdog err ${e.javaClass.simpleName}: ${e.message}")
             }
             mainHandler.postDelayed(this, WATCHDOG_MS)
         }
@@ -549,6 +559,8 @@ class SkipService : AccessibilityService() {
     }
 
     private fun spawn(task: SkipTask, event: AccessibilityEvent) {
+        // 识别方式=只跑 OCR 时，节点路整条不下发（首页一改立即生效，不缓存）
+        if (RuleStore.scanMode == K.SCAN_MODE_OCR) return
         task.eventTime = event.eventTime
         tasks.add(task)
         pool.execute(task)

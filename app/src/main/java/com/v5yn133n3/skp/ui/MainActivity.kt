@@ -66,13 +66,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import com.v5yn133n3.skp.K
+import com.v5yn133n3.skp.LogExport
+import com.v5yn133n3.skp.Logs
 import com.v5yn133n3.skp.R
 import com.v5yn133n3.skp.data.RuleStore
+import com.v5yn133n3.skp.engine.GlyphScan
 import com.v5yn133n3.skp.engine.DebugOverlay
 import com.v5yn133n3.skp.keep.KeepAlive
 import com.v5yn133n3.skp.priv.Mode
 import com.v5yn133n3.skp.priv.SelfHeal.Step
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -333,6 +337,82 @@ fun HomeScreen(onOpenApps: () -> Unit) {
             }
 
             InkCard {
+                Text("识别方式", fontWeight = FontWeight.Bold)
+                Text(
+                    "只决定「怎么找跳过」：无障碍读节点文字，OCR 看画面。改完立即生效，不用重启服务。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                var scan by remember { mutableStateOf(RuleStore.scanMode) }
+                listOf(
+                    Triple(K.SCAN_MODE_NODE, "无障碍模式", "只读节点文本，最省电；自绘的图片按钮认不出"),
+                    Triple(K.SCAN_MODE_OCR, "OCR 模式", "只看画面（字形匹配），不读节点"),
+                    Triple(K.SCAN_MODE_BOTH, "并发模式", "两条路同时跑，谁先命中谁点（默认）"),
+                ).forEach { (value, title, desc) ->
+                    fun choose() {
+                        scan = value
+                        RuleStore.scanMode = value
+                    }
+                    InkOption(selected = scan == value, onClick = { choose() }) {
+                        RadioButton(selected = scan == value, onClick = { choose() })
+                        Column(Modifier.weight(1f)) {
+                            Text(title)
+                            Text(desc, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+
+            InkCard {
+                Text("字形匹配阈值", fontWeight = FontWeight.Bold)
+                Text(
+                    "真机字体和内置字模的相似度上限只有 0.85 左右，" +
+                        "实测「跳过」落在 0.70–0.79。调高更严（少误报、可能漏），调低更松。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                var gate by remember { mutableStateOf(RuleStore.glyphGate) }
+                // 上次实际命中分：看着真机分数调滑条，比盲猜阈值靠谱
+                var lastHit by remember { mutableStateOf(0f) }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        lastHit = GlyphScan.lastCombo
+                        delay(500)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Slider(
+                        value = gate,
+                        onValueChange = {
+                            // 按 0.01 取整，避免浮点尾数写进 SP
+                            gate = (it * 100f).roundToInt() / 100f
+                            RuleStore.glyphGate = gate
+                        },
+                        valueRange = K.GLYPH_GATE_MIN..K.GLYPH_GATE_MAX,
+                        steps = 34,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(String.format("%.2f", gate), fontWeight = FontWeight.Bold)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0.58f, 0.62f, 0.68f, 0.72f).forEach { v ->
+                        TextButton(onClick = {
+                            gate = v
+                            RuleStore.glyphGate = v
+                        }) { Text(String.format("%.2f", v)) }
+                    }
+                }
+                Text(
+                    if (lastHit <= 0f) {
+                        "上次命中：暂无（跑一次 OCR 后会显示实际分数）"
+                    } else if (lastHit < gate) {
+                        "上次命中 " + String.format("%.2f", lastHit) + "：低于当前阈值，这档会漏"
+                    } else {
+                        "上次命中 " + String.format("%.2f", lastHit) + "：高于阈值，可正常触发"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            InkCard {
                 Text("OCR识别", fontWeight = FontWeight.Bold)
                 // 全局开关已删：扫带跑不跑只看「生效应用列表」里每包的识别方式开关。
                 // 识别时长滑条：4–10s，默认 6s。到点就停手，下一次**真正的应用切换**才重新计时。
@@ -409,6 +489,73 @@ fun HomeScreen(onOpenApps: () -> Unit) {
                     onClick = { context.startActivity(Intent(context, ImageTestActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("全屏图片测试（选一张整屏截图）") }
+            }
+
+            InkCard {
+                Text("日志", fontWeight = FontWeight.Bold)
+                Text(
+                    "平时关着：识别链路一条日志都不打，省电也省存储。" +
+                        "遇到不触发、点错位置时打开，跑一次问题场景，再导出日志发出去。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                var logOn by remember { mutableStateOf(Logs.enabled) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("记录详细日志（默认关）", Modifier.weight(1f))
+                    Switch(
+                        checked = logOn,
+                        onCheckedChange = { on ->
+                            logOn = on
+                            Logs.setEnabled(context, on)
+                        },
+                    )
+                }
+                var exporting by remember { mutableStateOf(false) }
+                var exportMsg by remember { mutableStateOf("") }
+                var exportUri by remember { mutableStateOf<Uri?>(null) }
+                OutlinedButton(
+                    enabled = !exporting,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        exporting = true
+                        exportMsg = "导出中…"
+                        scope.launch {
+                            val r = withContext(Dispatchers.IO) { LogExport.export(context) }
+                            exporting = false
+                            if (r.ok) {
+                                exportUri = r.uri
+                                exportMsg = "已导出到 " + r.path + "（" + (r.bytes / 1024) + " KB）"
+                            } else {
+                                exportUri = null
+                                exportMsg = "导出失败：" + (r.error ?: "未知原因")
+                            }
+                        }
+                    },
+                ) { Text(if (exporting) "导出中…" else "导出日志到 /sdcard") }
+                exportUri?.let { uri ->
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            runCatching {
+                                context.startActivity(Intent.createChooser(send, "发送日志"))
+                            }
+                        },
+                    ) { Text("分享刚导出的日志") }
+                }
+                if (exportMsg.isNotEmpty()) {
+                    Text(exportMsg, style = MaterialTheme.typography.bodySmall)
+                }
+                if (!Logs.enabled) {
+                    Text(
+                        "提示：日志开关关着时导出的只有配置信息，没有识别过程。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = BoxGray,
+                    )
+                }
             }
 
             InkCard {

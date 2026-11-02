@@ -6,6 +6,7 @@ import java.io.EOFException
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import com.v5yn133n3.skp.Logs
 
 /**
  * 整帧截图通道：`screencap` 不带文件名，裸帧（16B 头 + BGRA8888）直接从 stdout
@@ -72,7 +73,7 @@ object Capture {
             lastError = "截图失败(${lastMs}ms)：${err.ifBlank { "没有帧头" }}"
             return null
         }
-        if (err.isNotBlank()) Log.w(TAG, "screencap stderr: $err")
+        if (err.isNotBlank()) Logs.w(TAG, "screencap stderr: $err")
         lastError = ""
         return Frame(w, h, buf)
     }

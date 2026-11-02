@@ -32,13 +32,14 @@ backgrounds.
 
 ## Two paths
 
-The two are mutually exclusive: only one tap per frame is allowed, and whichever path fired holds
-the other off for 1.5–2s so a single trigger cannot tap twice.
+The home screen has three scan modes: **concurrent** (default, both paths at once), **accessibility
+only**, and **OCR only** (vision path alone). In concurrent mode only one tap per frame is allowed,
+and whichever path fired holds the other off for 1.5–2s so a single trigger cannot tap twice.
 
 | Path | Trigger | Signal | Fits |
 |---|---|---|---|
 | **Node path** (accessibility) | `TYPE_WINDOW_STATE_CHANGED` | Walks `AccessibilityNodeInfo`, matches text/description | Native widgets; cheapest and most precise |
-| **Vision path** (CornerTask) | same | Capture → banded proposals → SkipNet scoring → tap | Custom-drawn buttons, WebView content, text over artwork |
+| **Vision path** (CornerTask) | same | Capture → banded proposals → glyph-mask IoU → tap | Custom-drawn buttons, WebView content, text over artwork |
 
 The vision path end to end:
 
@@ -46,7 +47,7 @@ The vision path end to end:
 event → open session → raw-frame capture (screencap, ~210ms) → half-resolution luma
       → banded tiles (8 hot tiles, full band every 6 frames)
       → proposals (connected components + hot-region top-hat)
-      → SkipNet score (threshold 0.90)
+      → glyph match (two-axis 64×64 normalisation + IoU, threshold 0.62, slider on home)
       → BlobGate rejects solid blocks
       → title-bar guard (180ms budget, fail-open)
       → jitter → gestureTap
@@ -74,10 +75,14 @@ behavior itself:
 - **No persistent overlay.** `SYSTEM_ALERT_WINDOW` is only used for a full-screen debug canvas
   after the user explicitly enables it; otherwise no window exists. Some game anti-cheat treats an
   invisible overlay as cheating.
-- **Small-box guards are tiered by screen position** (top-right 90×26 / rest of top half 140×46 /
-  bottom half 60×24). The tiers split on height, not width: every real target measured falls in the
+- **Small-box guards are tiered by screen position** (top-right 62×22 / rest of top half 96×32 /
+  bottom half 44×20). The tiers split on height, not width: every real target measured falls in the
   3%–8.5% height band, the one false positive sat at 12.8%, and the width difference was 4px —
-  unseparable.
+  unseparable. The numbers are calibrated against the **glyph bounding box** (the two characters
+  only), which runs 25–35% smaller than the full pill.
+- **Logging is off by default.** The recognition path writes nothing at all until the home-screen
+  switch is on; then it mirrors to logcat plus a ring buffer, and "export log" drops a single file
+  into `/sdcard/Download/skp/` for the user to send back.
 
 ## Permissions and modes
 

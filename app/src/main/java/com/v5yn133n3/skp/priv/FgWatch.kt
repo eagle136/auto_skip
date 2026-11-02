@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import java.io.File
+import com.v5yn133n3.skp.Logs
 
 /**
  * root 专用：前台包名监听。
@@ -79,7 +80,7 @@ object FgWatch {
         dst.setExecutable(true, false)
         if (dst.length() > 0) dst else null
     } catch (e: Exception) {
-        Log.w(TAG, "extract 失败：${e.javaClass.simpleName}: ${e.message}")
+        Logs.w(TAG, "extract 失败：${e.javaClass.simpleName}: ${e.message}")
         null
     }
 
@@ -127,7 +128,7 @@ object FgWatch {
             timeoutMs = 12_000,
         )
         if (!dep.ok || !dep.out.contains(VERSION_MARK)) {
-            Log.w(TAG, "投放失败：${dep.out.trim().take(120)}")
+            Logs.w(TAG, "投放失败：${dep.out.trim().take(120)}")
             return false
         }
 
@@ -148,7 +149,7 @@ object FgWatch {
             mode,
             timeoutMs = 8_000,
         )
-        Log.i(TAG, "launch ok=${launch.ok} out=$out ${launch.out.trim().take(80)}")
+        Logs.i(TAG, "launch ok=${launch.ok} out=$out ${launch.out.trim().take(80)}")
 
         // 等 ELF 自己把「当前前台」写第一次（只有新进程会写这个文件）
         var cur = ""
@@ -163,14 +164,14 @@ object FgWatch {
             }
         }
         if (cur.isEmpty()) {
-            Log.w(TAG, "启动后 3s 没读到前台包名（ELF 没跑起来？看 /data/local/tmp/$BIN.log）")
+            Logs.w(TAG, "启动后 3s 没读到前台包名（ELF 没跑起来？看 /data/local/tmp/$BIN.log）")
             return false
         }
 
         // 当前已经在前面，不算一次切换（服务刚连上不该凭空扫一轮）
         current = cur
         observe(ctx)
-        Log.i(TAG, "在线，当前前台 $cur dir=${ctx.filesDir.absolutePath}")
+        Logs.i(TAG, "在线，当前前台 $cur dir=${ctx.filesDir.absolutePath}")
         return true
     }
 
@@ -201,7 +202,7 @@ object FgWatch {
         //   它绝不能挡在「开始识别」前面（真机 23:27 那条 gap=3073ms 就是它）。
         val t0 = SystemClock.uptimeMillis()
         runCatching { onPkg?.invoke(pkg) }
-        Log.i(TAG, "$src -> $pkg call=${SystemClock.uptimeMillis() - t0}ms")
+        Logs.i(TAG, "$src -> $pkg call=${SystemClock.uptimeMillis() - t0}ms")
     }
 
     /** FIFO。不存在就建一个（app 自己的私有目录，类型仍是 app_data_file）。 */
@@ -212,7 +213,7 @@ object FgWatch {
             android.system.Os.mkfifo(f.absolutePath, 438 /* 0666 */)
             f
         } catch (e: Exception) {
-            Log.w(TAG, "mkfifo 失败：${e.javaClass.simpleName}: ${e.message}")
+            Logs.w(TAG, "mkfifo 失败：${e.javaClass.simpleName}: ${e.message}")
             null
         }
     }
@@ -233,7 +234,7 @@ object FgWatch {
         // FIFO 是「一个读者拿走一份数据」，多开一个就可能把我们要的那行读走。
         if (pipeThread?.isAlive == true) return
         val f = fifo ?: run {
-            Log.w(TAG, "没有 FIFO，只能用文件轮询")
+            Logs.w(TAG, "没有 FIFO，只能用文件轮询")
             return
         }
         val t = Thread({
@@ -255,7 +256,7 @@ object FgWatch {
                 } catch (e: Exception) {
                     if (Thread.currentThread().isInterrupted) return@Thread
                     fails++
-                    if (fails <= 3) Log.w(TAG, "pipe 断开 ${e.javaClass.simpleName}: ${e.message}")
+                    if (fails <= 3) Logs.w(TAG, "pipe 断开 ${e.javaClass.simpleName}: ${e.message}")
                 } finally {
                     runCatching { fdesc?.let { android.system.Os.close(it) } }
                 }
@@ -288,9 +289,9 @@ object FgWatch {
                 val pkg = readOut()
                 val r1 = SystemClock.uptimeMillis()
                 // 单次读文件超过 150ms = 卡在 /data 的 I/O 上
-                if (r1 - r0 >= 150) Log.w(TAG, "readOut 阻塞 ${r1 - r0}ms")
+                if (r1 - r0 >= 150) Logs.w(TAG, "readOut 阻塞 ${r1 - r0}ms")
                 if (pkg.isNotEmpty() && pkg != current) {
-                    Log.i(TAG, "前台切换 -> $pkg gap=${r0 - lastTick}ms")
+                    Logs.i(TAG, "前台切换 -> $pkg gap=${r0 - lastTick}ms")
                     onPkgSeen(pkg, "poll")
                 }
                 // 用「现在」而不是读文件那一刻：中间可能被 onPkg / Log 占掉时间
@@ -301,7 +302,7 @@ object FgWatch {
                     val s1 = SystemClock.uptimeMillis()
                     // sleep(100) 睡成 3 秒 = 线程没被调度（定时器被压），
                     // 和文件、日志、ELF 都无关。这条是分诊用的，别删。
-                    if (s1 - s0 >= 200) Log.w(TAG, "sleep 拉长 ${s1 - s0}ms")
+                    if (s1 - s0 >= 200) Logs.w(TAG, "sleep 拉长 ${s1 - s0}ms")
                 } catch (_: InterruptedException) {
                     return@Thread
                 }
