@@ -68,8 +68,15 @@ jobs:
           apk="$(ls releases/*.apk | head -1)"
           test -f "$apk" || { echo "没找到发布包"; exit 1; }
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在，覆盖上传"
-            gh release upload "$TAG" "$apk" --clobber
+            # 包名每次随机，文件名每次都不一样，--clobber 覆盖不掉旧文件。
+            # 先清空已有资产，保证一个 Release 只挂一个包。
+            echo "Release $TAG 已存在，先清掉旧资产"
+            gh release view "$TAG" --json assets --jq '.assets[].name' |
+              while read -r old; do
+                [ -n "$old" ] && gh release delete-asset "$TAG" "$old" --yes
+              done
+            gh release upload "$TAG" "$apk"
+            gh release edit "$TAG" --notes-file notes.md
           else
             gh release create "$TAG" "$apk" \
               --title "$TAG" \

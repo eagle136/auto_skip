@@ -89,6 +89,11 @@
   `applicationId`（形如 `com.<8位>.<6位>`），构建完把 APK 丢进 `releases/`，目录里只留最新一个。
 - 因此 **`releases/` 里每个 APK 的包名都不同，签名指纹也都不同**，彼此无法互相覆盖安装。
 
+正式发布不用在本地跑脚本：打好注释标签（发布说明就是标签正文）推上去，
+`.github/workflows/release.yml` 会在 ubuntu 上跑同一个 `tools/make_release.py`，构建完把 APK
+挂到同名 Release，一个 Release 只保留一个包。已经推过的标签要补发，就在 Actions 里
+`Run workflow` 填标签名。
+
 这是刻意的：包名与签名指纹是应用在设备上的身份，固定身份意味着可以被按身份识别和追溯。
 
 **代价说清楚**：随机包名等于每次都是全新应用。装新版本后，无障碍服务要重新开、Root 授权要重新

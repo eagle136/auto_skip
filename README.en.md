@@ -108,6 +108,11 @@ This project **does not maintain a fixed identity**.
 - Consequently **every APK in `releases/` has a different package name and a different signing
   fingerprint**, and none of them can overwrite another.
 
+You do not have to run that script locally for a release: push an annotated tag (the tag body becomes
+the release notes) and `.github/workflows/release.yml` runs the same `tools/make_release.py` on
+ubuntu, then attaches the APK to the Release of the same name — one asset per Release. To backfill an
+older tag, open Actions → `release` → `Run workflow` and enter the tag name.
+
 That is deliberate: package name and signing fingerprint are an app's identity on a device, and a
 fixed identity is an identity that can be recognized and traced.
 
