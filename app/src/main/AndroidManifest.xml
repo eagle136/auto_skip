@@ -30,7 +30,6 @@
 
         <activity
             android:name=".ui.MainActivity"
-            android:excludeFromRecents="true"
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleTask">
@@ -42,9 +41,20 @@
 
         <activity
             android:name=".ui.ImageTestActivity"
-            android:exported="false"
+            android:exported="true"
             android:label="全屏图片测试"
-            android:launchMode="singleTop" />
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+        </activity>
 
         <service
             android:name=".engine.SkipService"

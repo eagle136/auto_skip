@@ -3,6 +3,7 @@ package com.v5yn133n3.skp.engine
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -62,6 +63,13 @@ class SkipService : AccessibilityService() {
         private const val WATCHDOG_MS = 400L
 
         /**
+         * 亮屏/解锁的去重窗口。没设锁屏的机器上 SCREEN_ON 与 USER_PRESENT 会连着来两条，
+         * 不去重就把同一轮重起两次 —— 识别次数默认 1 帧时，第一帧还没认完就被第二次重起
+         * 清掉，等于白截一张。
+         */
+        private const val WAKE_DEDUPE_MS = 1_000L
+
+        /**
          * 上一次真正开扫的包名。
          *
          * 「触发切换了就匹配包名开始识别」——这句话的落地就是它：看门狗只在
@@ -109,6 +117,9 @@ class SkipService : AccessibilityService() {
      */
     @Volatile
     private var lastCornerAt = 0L
+
+    /** 上一次按「亮屏解锁」重起识别的时刻，见 [WAKE_DEDUPE_MS]。只在主线程的广播里读写。 */
+    private var lastWakeAt = 0L
 
     /** trigger 日志节流用（同包 state=same 会连发多条，见 [triggerCorner]）。 */
     private var lastSameLogPkg: String? = null
@@ -159,17 +170,29 @@ class SkipService : AccessibilityService() {
     fun cornerHitRecently(): Boolean =
         cornerHitAt > 0 && SystemClock.uptimeMillis() - cornerHitAt < K.TAP_SETTLE_MS + 600
 
-    private val screenOffReceiver = object : BroadcastReceiver() {
+    private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            // 灭屏后重置“当前包”，回同一个小应用时也要重新跑一轮检测
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) lastPkg = null
+            when (intent?.action) {
+                // 灭屏后重置“当前包”，回同一个应用时也要重新跑一轮检测
+                Intent.ACTION_SCREEN_OFF -> lastPkg = null
+                // 亮屏但还锁着 → 等解锁那一条，别把本轮唯一的一帧花在锁屏上
+                Intent.ACTION_SCREEN_ON -> if (!keyguardLocked()) onWake()
+                Intent.ACTION_USER_PRESENT -> onWake()
+            }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
-        registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        registerReceiver(
+            screenReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            },
+        )
         if (RuleStore.foregroundServiceOn) startForegroundNotice()
     }
 
@@ -470,6 +493,43 @@ class SkipService : AccessibilityService() {
         triggerCorner("elf", pkg, SystemClock.uptimeMillis())
     }
 
+    /**
+     * 亮屏解锁 = 新一轮识别，**即使前台还是同一个包**。
+     *
+     * 息屏再解锁时应用常会重新弹一次开屏（摇一摇广告），而 OCR 路有两道闸都拦着它：
+     * 常驻任务在 [CornerTask.retargetTo] 里「同包一律不重扫」；任务已退出时
+     * [maybeStartCorner] 又按 `pkg == lastCornerPkg` 判「这个包扫过了」。结果就是
+     * 息屏一下解锁直接吃到广告、一帧都不认。节点路靠 SCREEN_OFF 清 lastPkg 已经会重来，
+     * 这里把 OCR 路补成对称的：清掉「已扫过」标记，并让常驻任务显式重起一轮。
+     *
+     * `@Synchronized`：和 ELF 那条 [onFgChanged] 共用同一把锁，否则两边可能各建一个任务。
+     */
+    @Synchronized
+    private fun onWake() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastWakeAt < WAKE_DEDUPE_MS) return
+        lastWakeAt = now
+        lastPkg = null
+        lastCornerPkg = null
+        hitThisWindow = false
+        val running = cornerTasks.firstOrNull { !it.finished && !it.cancelled }
+        val pkg = fastPkg()
+        if (running != null && (pkg == null || pkg == running.target || !RuleStore.isCornerTarget(pkg))) {
+            // 前台还没解析出来 / 还是系统壳 / 就是它盯着的那个包 → 直接重起一轮。
+            // 任务下一拍自己核对前台：真切走了就停手或接管，不会在锁屏/桌面上点。
+            running.restartRound(now)
+            Logs.i(TAG, "wake pkg=${running.target} state=rearm fg=${pkg ?: "null"}")
+            return
+        }
+        if (pkg != null) triggerCorner("wake", pkg, now)
+    }
+
+    /** 锁屏是否还盖着。取不到就当锁着 —— 宁可等 USER_PRESENT，也不要在锁屏上截图点击。 */
+    private fun keyguardLocked(): Boolean = runCatching {
+        val km = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
+        km == null || km.isKeyguardLocked
+    }.getOrDefault(true)
+
     /** 真正新建一个四角任务。冷却不满足返回 false。 */
     private fun startCorner(pkg: String, eventTime: Long): Boolean {
         val now = SystemClock.uptimeMillis()
@@ -716,7 +776,7 @@ class SkipService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        runCatching { unregisterReceiver(screenOffReceiver) }
+        runCatching { unregisterReceiver(screenReceiver) }
         mainHandler.removeCallbacks(watchdog)
         pool.shutdownNow()
         cornerTasks.forEach { it.cancelled = true }

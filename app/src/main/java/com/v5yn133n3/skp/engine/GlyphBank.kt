@@ -17,7 +17,7 @@ import com.v5yn133n3.skp.Logs
  * 中易黑体不同，IoU 会整体掉 0.05–0.1，等于把标定过的阈值全部作废。
  *
  * 文件格式（小端）：
- *   "GLY1" | ver=1 | nChar=2 | nFace=6 | 1B 保留
+ *   "GLY1" | ver=2 | nChar=2 | nFace=13 | 1B 保留
  *   nChar × nFace × 512B，每模板 64 行 × 8 字节，bit0 = 该行最左像素
  *   索引 = charIdx * nFace + faceIdx
  */
@@ -28,12 +28,14 @@ object GlyphBank {
     const val CH_TIAO = 0
     const val CH_GUO = 1
     const val N_CHAR = 2
-    const val N_FACE = 6
+    const val N_FACE = 13
     const val NORM = 64
 
     /** 字体顺序，与 export_tmpl.py 的 FACES 前 6 项一一对应，只用于日志。 */
     private val FACE_NAMES = arrayOf(
         "simhei", "NotoSansSC-VF", "msyh", "msyhl", "msyhbd", "deng",
+        "oplus-w100", "oplus-w200", "oplus-w300", "oplus-w400",
+        "oplus-w500", "oplus-w600", "oplus-w700",
     )
 
     private var tmpl: Array<LongArray> = emptyArray()
@@ -56,6 +58,11 @@ object GlyphBank {
                 raw[2] != 'Y'.code.toByte() || raw[3] != '1'.code.toByte()
             ) {
                 lastError = "模板头不对 size=${raw.size}"
+                return false
+            }
+            val ver = raw[4].toInt() and 0xFF
+            if (ver != 1 && ver != 2) {
+                lastError = "模板版本不对 ver=$ver"
                 return false
             }
             val nChar = raw[5].toInt() and 0xFF
@@ -113,26 +120,41 @@ object GlyphBank {
     fun score(cand: LongArray, candArea: Int, ch: Int): Float {
         if (!loaded || candArea <= 0) return 0f
         val base = ch * N_FACE
+        val dil = dilate3(cand)
+        val dilArea = area(dil)
+        val ero = erode3(cand)
+        val eroArea = area(ero)
         var best = 0f
         var bestFace = -1
+        var bestVar = 0
         for (f in 0 until N_FACE) {
             val area = inkArea[base + f]
             if (area <= 0) continue
-            val inter = intersect(cand, tmpl[base + f])
+            val t = tmpl[base + f]
+            val inter = intersect(cand, t)
             val iou = inter.toFloat() / (candArea + area - inter).toFloat()
-            if (iou > best) {
-                best = iou
-                bestFace = f
+            if (iou > best) { best = iou; bestFace = f; bestVar = 0 }
+            if (dilArea > 0) {
+                val i2 = intersect(dil, t)
+                val v2 = i2.toFloat() / (dilArea + area - i2).toFloat()
+                if (v2 > best) { best = v2; bestFace = f; bestVar = 1 }
+            }
+            if (eroArea > 0) {
+                val i3 = intersect(ero, t)
+                val v3 = i3.toFloat() / (eroArea + area - i3).toFloat()
+                if (v3 > best) { best = v3; bestFace = f; bestVar = 2 }
             }
         }
         if (bestFace < 0) return 0f
+        val cv = when (bestVar) { 1 -> dil; 2 -> ero; else -> cand }
+        val ca = when (bestVar) { 1 -> dilArea; 2 -> eroArea; else -> candArea }
         val t = tmpl[base + bestFace]
         val ta = inkArea[base + bestFace]
         for (dy in -SHIFT_RAD..SHIFT_RAD) {
             for (dx in -SHIFT_RAD..SHIFT_RAD) {
                 if (dx == 0 && dy == 0) continue
-                val inter = intersectShift(cand, t, dy, dx)
-                val iou = inter.toFloat() / (candArea + ta - inter).toFloat()
+                val inter = intersectShift(cv, t, dy, dx)
+                val iou = inter.toFloat() / (ca + ta - inter).toFloat()
                 if (iou > best) best = iou
             }
         }
@@ -177,4 +199,29 @@ object GlyphBank {
     }
 
     private const val SHIFT_RAD = 2
+
+    private fun area(a: LongArray): Int {
+        var s = 0; for (v in a) s += java.lang.Long.bitCount(v); return s
+    }
+
+    private fun dilate3(src: LongArray): LongArray {
+        val out = LongArray(NORM)
+        for (y in 0 until NORM) {
+            var v = src[y]
+            if (y > 0) v = v or src[y - 1]
+            if (y < NORM - 1) v = v or src[y + 1]
+            out[y] = v or (v shl 1) or (v ushr 1)
+        }
+        return out
+    }
+
+    private fun erode3(src: LongArray): LongArray {
+        val out = LongArray(NORM)
+        for (y in 0 until NORM) {
+            if (y == 0 || y == NORM - 1) { out[y] = 0L; continue }
+            val v = src[y] and src[y - 1] and src[y + 1]
+            out[y] = v and (v shl 1) and (v ushr 1)
+        }
+        return out
+    }
 }

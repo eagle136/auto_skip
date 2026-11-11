@@ -70,8 +70,10 @@ behavior itself:
   background. Hot-region top-hat (`lum − min7x7(lum)`) handles text printed directly onto artwork:
   any bright band wider than 7px is flattened by the min filter while 3–5px strokes survive intact,
   which incidentally makes it immune to border-touching components being discarded wholesale.
-- **One tap per trigger**, then a 1.2s sleep, no verification and no retry. A retry lands on the
-  next page — that is a measured conclusion, not a guess.
+- **One frame and one tap per trigger by default.** Raise the "OCR frames" slider above 1 to keep
+  recognizing and tapping inside the window; the same spot is still protected by a 3s cooldown, and
+  slow frames (>1s) fall back to a single tap. A tap swallowed by the ad SDK is re-sent once at the
+  same coordinates via `input tap`.
 - **No persistent overlay.** `SYSTEM_ALERT_WINDOW` is only used for a full-screen debug canvas
   after the user explicitly enables it; otherwise no window exists. Some game anti-cheat treats an
   invisible overlay as cheating.
@@ -92,8 +94,13 @@ of two tiers:
 | Mode | Requires | Gets you |
 |---|---|---|
 | Accessibility | Service enabled in system settings | Node path + `takeScreenshot` |
-| Root | su (Magisk / KernelSU / APatch) | Above + `screencap` raw frames + `WRITE_SECURE_SETTINGS` |
+| Root | su (Magisk / KernelSU / APatch) | Above + `screencap` raw frames + `WRITE_SECURE_SETTINGS`; on realme/OPPO/OnePlus it also joins the system "recent task lock" list |
 | Shizuku | Shizuku service | Same as Root, over `IRemoteProcess` |
+
+The home activity is no longer hidden from recents: the card has to be visible for the system
+lock/unlock action. In Root mode on Oplus ROMs the app also writes itself into the same lock list
+through a root-side `app_process`, so the battery cleaner skips it; other ROMs and the Shizuku mode
+keep the manual lock entry only.
 
 ## Signing and package name: different on every release
 
@@ -161,6 +168,16 @@ org.gradle.java.home=/path/to/jdk-17-or-newer
 `fgwatch-arm64` / `watchdog-arm64` under `app/src/main/assets/elf/` are cross-compiled from
 `tools/skp_fgwatch.c` and `native/watchdog.c`. Sources are in the repo; build them with the NDK.
 Prebuilt binaries ship with the repo, so a normal build does not need this.
+
+`skp_lock.dex` is built from `native/SkpLock.java` (one-off):
+
+```bash
+javac --release 8 -d /tmp/lockbuild -cp "$ANDROID_HOME/platforms/android-37.0/android.jar" \
+  native/SkpLock.java
+"$ANDROID_HOME/build-tools/36.0.0/d8" --release --min-api 35 \
+  --output /tmp/lockfinal /tmp/lockbuild/SkpLock.class
+cp /tmp/lockfinal/classes.dex app/src/main/assets/elf/skp_lock.dex
+```
 
 ### Training the model (optional)
 

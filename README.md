@@ -59,7 +59,9 @@
 - **候选提案分两路互补**：普通连通域处理有底的按钮；热区 top-hat（`lum − min7x7(lum)`）处理
   文字直接压在画面上的情况——宽过 7px 的亮带被最小值滤波抹平，3–5px 的笔画完整留下，天然免疫
   贴边连通域被整块砍掉的问题。
-- **一次触发只点一下**，点完等 1.2s 不做校验不补点。补点必然落到下一页上，这是实测结论。
+- **默认一次触发只截一帧、点一下**；把「OCR识别次数」调到 2 帧以上才会在识别窗口内连续识别点击，
+  同一位置仍受 3s 冷却保护，慢帧（截图+识别 >1s）这一轮退回只点一次。点击被广告 SDK 吞掉时，
+  同坐标用 `input tap` 补发一次。
 - **不常驻悬浮窗**。`SYSTEM_ALERT_WINDOW` 只在手动打开调试开关后才挂一条全屏 Canvas，平时不建
   窗口——部分游戏的反作弊会把隐形悬浮窗判成外挂。
 - **小框护栏按屏幕位置分档**（右上角 62×22 / 其余上半屏 96×32 / 下半屏 44×20）。分档依据是
@@ -75,8 +77,12 @@
 | 档位 | 依赖 | 能力 |
 |---|---|---|
 | 无障碍 | 系统设置里开启服务 | 节点路 + `takeScreenshot` |
-| Root | su（Magisk / KernelSU / APatch） | 上述 + `screencap` 裸帧 + `WRITE_SECURE_SETTINGS` |
+| Root | su（Magisk / KernelSU / APatch） | 上述 + `screencap` 裸帧 + `WRITE_SECURE_SETTINGS`；realme/OPPO/OnePlus 还会写进系统「最近任务锁定」名单 |
 | Shizuku | Shizuku 服务 | 同 Root，走 `IRemoteProcess` |
+
+主界面不再从最近任务隐藏：卡片可见才能在系统里手动「锁定/解锁」。Root 档在 Oplus 系 ROM 上
+会通过 root 侧 `app_process` 自动写入同一份锁定名单，清理器不会再把它当后台耗电清掉；其它机型和
+Shizuku 档只保留手动锁定入口。
 
 ## 签名与包名：每次发布都不一样
 
@@ -136,6 +142,16 @@ org.gradle.java.home=/path/to/jdk-17-or-newer
 
 `app/src/main/assets/elf/` 里的 `fgwatch-arm64` / `watchdog-arm64` 由 `tools/skp_fgwatch.c`、
 `native/watchdog.c` 交叉编译而来，源码在仓库内，用 NDK 编即可。仓库已带编译好的二进制。
+
+`skp_lock.dex` 由 `native/SkpLock.java` 编译（只需一次）：
+
+```bash
+javac --release 8 -d /tmp/lockbuild -cp "$ANDROID_HOME/platforms/android-37.0/android.jar" \
+  native/SkpLock.java
+"$ANDROID_HOME/build-tools/36.0.0/d8" --release --min-api 35 \
+  --output /tmp/lockfinal /tmp/lockbuild/SkpLock.class
+cp /tmp/lockfinal/classes.dex app/src/main/assets/elf/skp_lock.dex
+```
 
 ### 训练模型（可选）
 

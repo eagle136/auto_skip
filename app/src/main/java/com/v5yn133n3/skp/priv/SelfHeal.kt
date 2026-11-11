@@ -204,12 +204,23 @@ object SelfHeal {
         return isServiceEnabled(context)
     }
 
-    /** 电池优化白名单，shell uid 就能做，Root 同样可用。 */
+    /**
+     * 电池优化白名单，shell uid 就能做，Root 同样可用。
+     * 补白名单时顺带把 App Standby 的 inactive 标记清掉：被系统记成 inactive 的应用
+     * 既收不到开机广播，也更容易进清理器的候选集。
+     */
     fun ensureBatteryWhitelist(context: Context, mode: Mode, add: Boolean): Step {
         if (mode == Mode.NONE) return Step("电池白名单", false, "无提权")
         val arg = if (add) "+${context.packageName}" else "-${context.packageName}"
         val r = Shell.run("dumpsys deviceidle whitelist $arg", mode)
-        return Step("电池白名单", r.ok, r.out.trim().lines().lastOrNull().orEmpty())
+        var ok = r.ok
+        if (add) {
+            Shell.run("am set-inactive ${context.packageName} false", mode)
+            val idle = Shell.run("am get-inactive ${context.packageName}", mode).out.trim()
+            // 部分 ROM 没这个隐藏命令；只有明确读到 Idle=true 才否决白名单结果
+            if (idle.contains("Idle=true", ignoreCase = true)) ok = false
+        }
+        return Step("电池白名单", ok, r.out.trim().lines().lastOrNull().orEmpty())
     }
 
     /** 把 pm grant 也做掉，之后即使 Shizuku 退出，App 自己也能写 secure settings。 */

@@ -5,6 +5,7 @@ import com.v5yn133n3.skp.data.RuleStore
 import com.v5yn133n3.skp.engine.SkipService
 import com.v5yn133n3.skp.priv.Daemon
 import com.v5yn133n3.skp.priv.Mode
+import com.v5yn133n3.skp.priv.OemLock
 import com.v5yn133n3.skp.priv.SelfHeal
 import com.v5yn133n3.skp.priv.SelfHeal.Step
 import com.v5yn133n3.skp.priv.Shell
@@ -12,7 +13,8 @@ import com.v5yn133n3.skp.priv.Shell
 /**
  * 保活落地：把「档位」翻译成具体动作。
  * 每一档都只补齐、不翻转（旧版 toggle 的坑，见 进度.txt §B4）。
- * 最近任务隐藏走的是 manifest 里的 excludeFromRecents（见 §B8），保活本身不依赖它。
+ * 主界面不再隐藏最近任务：卡片可见才能用系统的「锁定」，Root 档还会自动写进锁定名单
+ * （见 [OemLock]）；清理器选中不选中它不是靠 oom 决定的。
  */
 object KeepAlive {
 
@@ -48,6 +50,9 @@ object KeepAlive {
         if (mode != Mode.NONE) {
             steps += Daemon.start(context, mode)
         }
+        // realme/OPPO 系：把本应用写进「最近任务锁定」名单，清理器就不会把它当后台耗电清掉。
+        // 普通应用没有写这名单的签名权限，只有 Root 档做得到；其它机型返回 null、不占状态行。
+        OemLock.enable(context, mode)?.let { steps += it }
         return steps
     }
 

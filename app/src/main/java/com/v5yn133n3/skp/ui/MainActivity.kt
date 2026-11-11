@@ -415,7 +415,30 @@ fun HomeScreen(onOpenApps: () -> Unit) {
             InkCard {
                 Text("OCR识别", fontWeight = FontWeight.Bold)
                 // 全局开关已删：扫带跑不跑只看「生效应用列表」里每包的识别方式开关。
-                // 识别时长滑条：4–10s，默认 6s。到点就停手，下一次**真正的应用切换**才重新计时。
+                // 识别次数滑条：1–10，默认 1 = 一次触发只截一帧。到数就停手，
+                // 下一次应用切换或亮屏解锁才重新给一份配额。
+                var shots by remember { mutableStateOf(RuleStore.cornerScanFrames) }
+                Text("OCR识别次数", fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Slider(
+                        value = shots.toFloat(),
+                        onValueChange = {
+                            shots = it.roundToInt()
+                                .coerceIn(K.CORNER_SCAN_FRAMES_MIN, K.CORNER_SCAN_FRAMES_MAX)
+                            RuleStore.cornerScanFrames = shots
+                        },
+                        valueRange = K.CORNER_SCAN_FRAMES_MIN.toFloat()..K.CORNER_SCAN_FRAMES_MAX.toFloat(),
+                        steps = K.CORNER_SCAN_FRAMES_MAX - K.CORNER_SCAN_FRAMES_MIN - 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("${shots}次", fontWeight = FontWeight.Bold)
+                }
+                Text(
+                    "一次触发截几帧来认。默认 1 帧：延迟之后截一张、认一次就收手，" +
+                        "「识别间隔」要 2 帧起才起作用。多层广告（跳过 → 再盖一层关闭）调到 2–3。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                // 识别时长滑条：4–10s，默认 4s。到点就停手，下一次触发才重新计时。
                 var timeoutSec by remember { mutableStateOf(RuleStore.cornerTimeoutSec) }
                 Text("调整OCR识别时间", fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -454,6 +477,27 @@ fun HomeScreen(onOpenApps: () -> Unit) {
                         if (delayMs == 0) "关" else String.format("%.1fs", delayMs / 1000f),
                         fontWeight = FontWeight.Bold,
                     )
+                }
+
+                // 识别窗口内的运行间隔：800–2000ms。识别时长内每隔这么久截一帧再认一次，
+                // 命中就点、没命中就等下一轮。
+                var gapMs by remember { mutableStateOf(RuleStore.cornerScanGapMs) }
+                Text("识别间隔", fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Slider(
+                        value = gapMs.toFloat(),
+                        onValueChange = {
+                            // 按 100ms 取整，避免滑条给出一堆零碎毫秒
+                            val ms = ((it / 100f).roundToInt() * 100)
+                                .coerceIn(K.CORNER_SCAN_GAP_MIN, K.CORNER_SCAN_GAP_MAX)
+                            gapMs = ms
+                            RuleStore.cornerScanGapMs = ms
+                        },
+                        valueRange = K.CORNER_SCAN_GAP_MIN.toFloat()..K.CORNER_SCAN_GAP_MAX.toFloat(),
+                        steps = (K.CORNER_SCAN_GAP_MAX - K.CORNER_SCAN_GAP_MIN) / 100 - 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("${gapMs}ms", fontWeight = FontWeight.Bold)
                 }
 
                 // 调试观测口：一个看「扫的时候屏幕上被框了什么」，一个拿静态图复现同一套扫描。

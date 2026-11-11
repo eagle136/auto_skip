@@ -75,12 +75,42 @@ object K {
     const val DEBUG_LOG = "debug_log"
 
     /**
-     * 两帧之间至少间隔这么久。测试版口径是「1s 内最多识别 1 次」。
+     * 一次触发截几帧来识别（首页滑条 1–10，**默认 1**）。
      *
-     * 原来高频档靠截图 170ms 天然限速，一帧约 360ms（≈3 帧/秒），远超这个口径；
-     * 首帧不节流 —— 切应用后第一次必须马上出结果。
+     * 计数口径是**真截到并认过的帧**：截图失败不计数，触发延迟那段不算帧。
+     * 到数就收手进空转态，等下一次应用切换或亮屏解锁重新给一份配额。
+     *
+     * 默认 1 = 一次触发只截一帧、认一次就结束（延迟之后那一帧）。这时
+     * [CORNER_SCAN_GAP] 完全不起作用（它只管第 2 帧起），[CORNER_TIMEOUT_SEC] 也基本
+     * 碰不到 —— 一帧 ~0.3s 远小于 4s 窗口。要抓「跳过 → 再盖一层关闭」这种多层广告，
+     * 把这颗调到 2–3，间隔和时长才重新有意义。
      */
-    const val MIN_SCAN_INTERVAL_MS = 1_000L
+    const val CORNER_SCAN_FRAMES = "corner_scan_frames"
+    const val CORNER_SCAN_FRAMES_MIN = 1
+    const val CORNER_SCAN_FRAMES_MAX = 10
+    const val CORNER_SCAN_FRAMES_DEFAULT = 1
+
+    /**
+     * 「时长 4s / 延迟 0.5s / 间隔 1400ms」的一次性迁移标记。
+     *
+     * 这三颗滑条一拖就写进 prefs，光改 getter 默认值对已经拖过的机器无效 ——
+     * 用户看到的就是「默认值改了没生效」。带这个标记强制写回一次，之后再调就不动。
+     */
+    const val OCR_DEFAULTS_RESET = "ocr_defaults_reset_v1"
+
+    /**
+     * 识别窗口内的运行间隔（毫秒，首页滑条 800–2000，默认 1400）。
+     *
+     * 到点后先睡够这个间隔再截下一帧，首帧不节流 —— 切应用后第一次必须马上出结果。
+     * 只从第 2 帧起生效：识别次数（[CORNER_SCAN_FRAMES]）设 1 时整轮只截一帧，这颗滑条不起作用。
+     * 识别窗口内的点击不再固定 1 次：只要还在窗口内、同一颗按钮不在冷却期，就继续认、
+     * 继续点（上限见 [CORNER_MAX_CLICKS]）。间隔调小=反应快但截图更频繁，
+     * 调大=省电、但慢半拍的按钮要等下一轮。
+     */
+    const val CORNER_SCAN_GAP = "corner_scan_gap_ms"
+    const val CORNER_SCAN_GAP_MIN = 800
+    const val CORNER_SCAN_GAP_MAX = 2_000
+    const val CORNER_SCAN_GAP_DEFAULT = 1_400
 
     /**
      * 字形匹配的判定阈值（首页滑条可调）。
@@ -119,19 +149,18 @@ object K {
     const val MIN_TIMEOUT_MS = 1_000
 
     /**
-     * 四角扫带的单次时长上限。**到点就停手，不再截图、不再画框**，等下一次应用切换
-     * 或窗口事件重新计时。
+     * 识别时长：首页滑条口径 [4s, 10s]，**默认 4s**。
      *
-     * 之前放过 600s（想覆盖「逛半分钟才弹的插屏」），实测代价太大：停不下来的截图和
-     * 调试框一直刷屏，用户看到的就是「界面一直不停」。10s 是他钉的口径；
-     * 现在滑条可调 4–10s，默认 **6s**。
+     * 单次触发的时长上限，**到点就停手，不再截图、不再画框**，等下一次应用切换或
+     * 亮屏解锁重新计时。之前放过 600s（想覆盖「逛半分钟才弹的插屏」），实测代价太大：
+     * 停不下来的截图和调试框一直刷屏，用户看到的就是「界面一直不停」。
+     *
+     * 现在先到的那道闸通常是识别次数（[CORNER_SCAN_FRAMES]，默认 1 帧）；
+     * 时长只在次数调大到窗口装不下时才会先于次数收手。
      */
-    const val CORNER_TIMEOUT_MS = 6_000
-
-    /** 识别时长可在首页滑条上调，口径锁 [4s, 10s]，默认 6s。 */
     const val CORNER_TIMEOUT_MIN_S = 4
     const val CORNER_TIMEOUT_MAX_S = 10
-    const val CORNER_TIMEOUT_DEFAULT_S = 6
+    const val CORNER_TIMEOUT_DEFAULT_S = 4
     const val CORNER_TIMEOUT_SEC = "corner_timeout_sec"
 
     /**
@@ -154,16 +183,17 @@ object K {
     const val CHROME_GUARD_DP = 56f
 
     /**
-     * 触发延迟：检测到应用切换后**先等这么久再开始截图/OCR**，滑条口径 [0s, 2.0s]。
+     * 触发延迟：检测到应用切换 / 亮屏解锁后**先等这么久再开始截图/OCR**，
+     * 滑条口径 [0s, 2.0s]，**默认 500ms**。
      *
      * 为什么要等：切应用那一瞬截到的常常还是上一屏的残留 / 广告的占位图。
-     * **默认 0（关）**：事件本身已经晚了 ~570ms，再等 0.5–1.5s 就是「广告播了
-     * 一两秒才点」的主因。扫早一点最多白扫一帧，成本 0.36s；扫晚了是直接看不到
-     * 跳过按钮。留滑条只为「首页很卡 / 广告延迟很久才出」这类个别包手动加。
+     * 代价要认：事件本身已经晚了 ~570ms，再等就是「广告播了一会儿才点」。
+     * 识别次数默认 1 帧时这段延迟尤其关键 —— 那一帧是整轮唯一的一帧，截早了拿到
+     * 占位图就等于整轮白跑。往 0 调=抢快（最多白扫一帧），往 2s 调=等广告出全。
      */
     const val CORNER_START_DELAY_MIN_MS = 0
     const val CORNER_START_DELAY_MAX_MS = 2_000
-    const val CORNER_START_DELAY_DEFAULT_MS = 0
+    const val CORNER_START_DELAY_DEFAULT_MS = 500
     const val CORNER_START_DELAY_MS = "corner_start_delay_ms"
 
     /** 低频档帧间隔。 */
@@ -228,13 +258,25 @@ object K {
     const val CORNER_CLICK_COOL_MS = 3_000L
 
     /**
-     * 一次触发最多点几次。**固定 1 次**：点完就关 OCR，不再扫、不再补。
+     * 一次触发最多点几次（识别窗口内连续识别点击）。
      *
-     * 用户口径：一次触发只点一下，然后彻底停 —— 广告关闭有 0.4–1.2s 延迟，多点只看
-     * 到「又点了一下」，还会打到刚跳过去的新页面上。要再点必须等下一次触发
-     * （应用切换，或同包内新窗口事件把会话重新唤醒）。
+     * 同一颗按钮仍受 [CORNER_CLICK_COOL_MS] 冷却保护，不会按帧连点；位置不同的下一层
+     * （「跳过」之后盖上的「关闭」）照点。上限只是防数组无界的硬闸，正常命中 2–3 次。
+     *
+     * 代价要认：点击不再受「一次窗口只点一下」保护，广告页上除了跳过按钮全是可点热区，
+     * 所以误报的代价比原来高 —— 判定线（首页滑条）别往下调。
      */
-    const val CORNER_MAX_CLICKS = 1
+    const val CORNER_MAX_CLICKS = 20
+
+    /**
+     * 上一帧「截图 + 识别」超过这么久时，这一轮**只点一次**（见 [CORNER_CLICKS_ONCE]）。
+     *
+     * 依据：一帧就要 1s 以上时，广告早播完了；再连点只会打到跳过去的新页面。
+     */
+    const val CORNER_FRAME_SLOW_MS = 1_000L
+
+    /** 慢帧（见 [CORNER_FRAME_SLOW_MS]）这一轮允许的点击次数。 */
+    const val CORNER_CLICKS_ONCE = 1
 
     /**
      * 手势点击的按压时长。原来写死 1 ms（down/up 同一时刻），部分 View —— 尤其广告 SDK

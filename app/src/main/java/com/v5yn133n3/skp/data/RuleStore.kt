@@ -83,6 +83,16 @@ object RuleStore {
                 .putBoolean(K.SCAN_MODE_RESET, true)
                 .apply()
         }
+        // 时长 4s / 延迟 0.5s / 间隔 1400ms：这三颗滑条拖过的机器 prefs 里存着旧值，
+        // 光改 getter 默认值对它们无效，这里强制写回一次
+        if (!global.getBoolean(K.OCR_DEFAULTS_RESET, false)) {
+            global.edit()
+                .putInt(K.CORNER_TIMEOUT_SEC, K.CORNER_TIMEOUT_DEFAULT_S)
+                .putInt(K.CORNER_START_DELAY_MS, K.CORNER_START_DELAY_DEFAULT_MS)
+                .putInt(K.CORNER_SCAN_GAP, K.CORNER_SCAN_GAP_DEFAULT)
+                .putBoolean(K.OCR_DEFAULTS_RESET, true)
+                .apply()
+        }
     }
 
     private fun loadBuiltin(context: Context): Map<String, JSONObject> {
@@ -318,10 +328,6 @@ object RuleStore {
         set(value) = global.edit().putString(K.SCAN_MODE, value).apply()
 
     /**
-     * 单次识别时长（秒），首页滑条口径 4–10，**默认 6**。
-     * 到点就停手，等下一次**真正的应用切换**再重新计时。
-     */
-    /**
      * 字形匹配阈值。每次扫描现读，滑条一拖下一帧就生效。
      *
      * 0.50 → 极端宽松（召回最高，可能误报）；0.62 默认（实测 28/28、0 误报）；
@@ -334,6 +340,21 @@ object RuleStore {
             .putFloat(K.GLYPH_GATE, value.coerceIn(K.GLYPH_GATE_MIN, K.GLYPH_GATE_MAX))
             .apply()
 
+    /**
+     * 一次触发截几帧来识别，口径 [1, 10]，**默认 1**。每轮起算时现读一次。
+     * 到数就收手，等下一次应用切换或亮屏解锁再给一份新配额。
+     */
+    var cornerScanFrames: Int
+        get() = global.getInt(K.CORNER_SCAN_FRAMES, K.CORNER_SCAN_FRAMES_DEFAULT)
+            .coerceIn(K.CORNER_SCAN_FRAMES_MIN, K.CORNER_SCAN_FRAMES_MAX)
+        set(value) = global.edit()
+            .putInt(
+                K.CORNER_SCAN_FRAMES,
+                value.coerceIn(K.CORNER_SCAN_FRAMES_MIN, K.CORNER_SCAN_FRAMES_MAX),
+            )
+            .apply()
+
+    /** 单次识别时长（秒），首页滑条口径 4–10，**默认 4**。到点就停手，等下一次触发再重新计时。 */
     var cornerTimeoutSec: Int
         get() = global.getInt(K.CORNER_TIMEOUT_SEC, K.CORNER_TIMEOUT_DEFAULT_S)
             .coerceIn(K.CORNER_TIMEOUT_MIN_S, K.CORNER_TIMEOUT_MAX_S)
@@ -344,8 +365,19 @@ object RuleStore {
     /** 单次识别时长（毫秒），扫带任务每轮取一次。 */
     val cornerTimeoutMs: Long get() = cornerTimeoutSec * 1000L
 
+    /** 识别窗口内的运行间隔（毫秒），口径 [800, 2000]，默认 1400。只管第 2 帧起。 */
+    var cornerScanGapMs: Int
+        get() = global.getInt(K.CORNER_SCAN_GAP, K.CORNER_SCAN_GAP_DEFAULT)
+            .coerceIn(K.CORNER_SCAN_GAP_MIN, K.CORNER_SCAN_GAP_MAX)
+        set(value) = global.edit()
+            .putInt(
+                K.CORNER_SCAN_GAP,
+                value.coerceIn(K.CORNER_SCAN_GAP_MIN, K.CORNER_SCAN_GAP_MAX),
+            )
+            .apply()
+
     /**
-     * 触发延迟（毫秒）：检测到应用切换后先等这么久再开扫，口径 [500, 2000]，**默认 1500**。
+     * 触发延迟（毫秒）：检测到应用切换 / 亮屏解锁后先等这么久再开扫，口径 [0, 2000]，**默认 500**。
      * 切应用那一瞬截到的多是上一屏残留/占位图，等一下新画面才稳。
      */
     var cornerStartDelayMs: Int

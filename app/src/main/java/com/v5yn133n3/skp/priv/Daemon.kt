@@ -13,8 +13,9 @@ import java.io.File
  * 服务记成故障态不再绑（开机被 ROM 杀掉就是后者）。修法只有一个——把本组件从
  * `enabled_accessibility_services` 摘掉再挂回去，见 进度.txt §B11；翻 `accessibility_enabled`
  * 主开关不起作用（那是 AMS 自己回写的输出值）。改名单要 shell 或 root 的写权限，两档都满足。
- * 重绑拿不到进程才 `am start` 起界面兜底；有 root 能力时再把 oom_score_adj 压到 -900
- * （跨 uid 写不了，ELF 失败只记日志不退出）。
+ * 重绑拿不到进程才 `am start` 起界面兜底；有 root 能力时再把 oom_score_adj 压到 -1000
+ * （内核允许的最低档，LMKD 不会选它；跨 uid 写不了，ELF 失败只记日志不退出）。
+ * AMS 自己的 cur=100 是 FGS 的正常账，内核值才是 LMKD 的判据，所以 ELF 每秒重刷一次。
  *
  * 交付物只有 APK，ELF 塞在 assets 里；启动时解出来再放到可执行目录——各 ROM 的 /data 挂载
  * 常常是 noexec，所以逐个候选点试跑，`-v` 回读到版本标记才算成。
@@ -33,11 +34,16 @@ object Daemon {
      */
     val matchPattern: String = "[${PATH_HINT.first()}]${PATH_HINT.drop(1)}"
 
-    /** Root 把引擎 oom_score_adj 压到这一档：低于普通后台，高于内核线程。 */
-    const val OOM_TARGET = -900
+    /** Root 把引擎 oom_score_adj 压到最低档：-1000 时 oom_score=0、oom_adj=-17，LMKD 不会选它。 */
+    const val OOM_TARGET = -1000
 
     private const val STATUS_FILE_NAME = "$PATH_HINT.status"
-    private const val VERSION_MARK = "skipd-ok"
+    /**
+     * 版本串必须整串匹配（同 FgWatch 的教训：只查前缀会让旧二进制混过验收）。
+     * 改了 native/watchdog.c 就要在这里和 C 侧一起加一版，否则已运行的旧守护
+     * 会被“已运行”快路径留下来，新代码永远不上机。
+     */
+    private const val VERSION_MARK = "skipd-ok v2"
 
     /** 守护往二进制同目录写 `alive <daemonPid> <enginePid> <restarts>`，Kotlin 侧读它展示状态。 */
     private const val DEFAULT_DIR = "/data/local/tmp"
@@ -82,11 +88,14 @@ object Daemon {
     private fun deploy(src: File, dst: String, mode: Mode, timeoutMs: Long): ShellResult =
         if (mode == Mode.ROOT) {
             val dir = dst.substringBeforeLast('/')
+            // 必须先落 .tmp 再 mv：旧守护正跑着 $dst，直接 cp 会 ETXTBSY，
+            // 旧版就是这么静默留在磁盘上、检查 $dst -v 还照样通过的。
             Shell.run(
                 listOf(
                     "mkdir -p $dir 2>/dev/null",
-                    "cp ${src.absolutePath} $dst 2>/dev/null || cat ${src.absolutePath} > $dst",
-                    "chmod 0755 $dst",
+                    "cp ${src.absolutePath} $dst.tmp 2>/dev/null || cat ${src.absolutePath} > $dst.tmp",
+                    "chmod 0755 $dst.tmp",
+                    "mv -f $dst.tmp $dst",
                     "$dst -v",
                 ),
                 mode,
@@ -100,6 +109,7 @@ object Daemon {
      * 安装并启动。逐步返回结果给 UI 直接展示，不折叠成单个成功位——
      * 「装上了但没跑起来」和「根本没权限」是两回事。
      */
+    @Synchronized
     fun start(context: Context, mode: Mode): List<Step> {
         if (mode == Mode.NONE) {
             return listOf(Step("守护进程", false, "无提权：守护要 shell 或 root 能力才起得来"))
@@ -107,6 +117,17 @@ object Daemon {
         // 先把通道打通再说投放：否则四个候选目录各报一次同一种错误，看不出根因
         if (!Shell.available(context, mode)) {
             return listOf(Step("提权通道", false, "通道不可用：${Shell.unavailableReason(mode)}"))
+        }
+        // 页面刷新、开机广播、系统拉活都会走到这里；守护已经在线且版本对得上就别重启它。
+        // 旧版无条件先投放再 pkill，等于每进一次页面都把守护换一遍。
+        val liveDir = RuleStore.daemonBinDir
+        if (liveDir.isNotEmpty() && isRunning(mode)) {
+            val ver = Shell.run("${binPath(liveDir)} -v", mode, timeoutMs = 4_000)
+            if (ver.out.contains(VERSION_MARK)) {
+                return listOf(
+                    Step("守护进程", true, "已在运行：${statusLine(mode).ifEmpty { "pid 在线" }}")
+                )
+            }
         }
         val src = extract(context)
             ?: return listOf(Step("投放 ELF", false, "安装包内没有 ${assetName()}，构建时未产出守护程序"))

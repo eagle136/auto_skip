@@ -4,9 +4,9 @@
  * 两种坏法：① 进程没了（pidfd 事件）；② 进程还在但服务被 AMS 判成 crashed，
  * 这种不会自愈，只能把本服务从 enabled_accessibility_services 摘掉再挂回去
  * （写回同一份名单等于没写，accessibility_enabled 0/1 更是 no-op）。
- * 事件口径：进程退出是内核事件，不靠轮询发现；服务状态每 2s 复检一次 dumpsys。
- * 唯一的周期动作是每 5s 重刷一次 oom_score_adj——AMS 会按它对进程的判定不断改写这个值，
- * 只写一次的守护等于没写。
+ * 事件口径：进程退出是内核事件，不靠轮询发现；服务状态进程活着时每 10s 复检一次 dumpsys。
+ * 周期动作有两个：每 1s 重刷 oom_score_adj（AMS 会按它对进程的判定不断改写这个值），
+ * 以及上面的 crashed 复检——进程活着但服务没绑上时，不主动发现就永远不会重绑。
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -28,13 +28,24 @@
 #define __NR_pidfd_open 434
 #endif
 
-#define VERSION_MARK "skipd-ok"
+/* 改了守护行为就加一版；Kotlin 侧 Daemon.VERSION_MARK 必须整串一致，否则旧进程会被跳过。 */
+#define VERSION_MARK "skipd-ok v2"
 #define OOM_SELF (-1000)
-#define ASSERT_INTERVAL_MS 5000
+/* AMS 会按自己对进程的判定不断改写 oom_score_adj，-1000 只能靠高频重刷保持。
+ * 每秒一次 poll 超时 + 一次 write，代价可以忽略；5s 的窗口足够让 LMKD 选中它。 */
+#define ASSERT_INTERVAL_MS 1000
 #define RESTART_MIN_MS 2000
 #define WAIT_PID_TIMEOUT_MS 60000
 /* 重绑名单后进程出现得比 am 快，先只等这一小段，等不到才走可见兜底 */
 #define REBIND_WAIT_MS 8000
+/* 进程还在、但无障碍被系统记成 crashed 时，wait_death 多久复检一次 dumpsys */
+#define ALIVE_CRASH_CHECK_MS 10000
+/* 状态文件周期重写：被 pkill 的旧守护会写 exit，活着的守护要把它盖回来 */
+#define STATUS_REFRESH_MS 5000
+/* 进程没了但服务没坏：只 am start，不碰共享的无障碍名单。这条闸门只防紧循环。 */
+#define RESTART_GATE_MS 10000
+/* am start 后等进程出现的窗口 */
+#define RESTART_WAIT_MS 15000
 /* 修故障态时的复检节奏：service_crashed() 要跑一次 dumpsys，别按 500ms 轮 */
 #define CRASH_CHECK_INTERVAL_MS 2000
 /*
@@ -223,6 +234,28 @@ static void escape_cgroup(void)
     trace("cgroup now %s", seen[0] != '\0' ? seen : "(读不到)");
 }
 
+/* 读回内核记的那份 oom_score_adj，状态行用它证明 -1000 真的写进去了。 */
+static int read_oom(int pid)
+{
+    char path[64];
+    char buf[16];
+    ssize_t n;
+    int fd;
+
+    if (pid <= 0)
+        return 0;
+    snprintf(path, sizeof path, "/proc/%d/oom_score_adj", pid);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return 0;
+    n = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (n <= 0)
+        return 0;
+    buf[n] = '\0';
+    return atoi(buf);
+}
+
 static void write_status(const char *state, int engine_pid, int restarts)
 {
     char path[600];
@@ -234,7 +267,8 @@ static void write_status(const char *state, int engine_pid, int restarts)
     fp = fopen(path, "w");
     if (!fp)
         return;
-    fprintf(fp, "%s daemon=%d engine=%d restarts=%d\n", state, (int)getpid(), engine_pid, restarts);
+    fprintf(fp, "%s daemon=%d engine=%d restarts=%d oom=%d\n",
+            state, (int)getpid(), engine_pid, restarts, read_oom(engine_pid));
     fclose(fp);
     rename(path, g_status);
 }
@@ -378,12 +412,15 @@ static void launch_app(void)
 }
 
 /*
- * 等进程退出。返回 1 = 进程确实没了，0 = 被信号打断继续退出。
- * 每次超时（5s）顺带重刷 oom_score_adj，这是唯一周期动作。
+ * 等进程退出。返回 1 = 进程确实没了，2 = 进程还在但无障碍服务被系统记成 crashed，
+ * 0 = 被信号打断继续退出。每次超时（1s）顺带重刷 oom_score_adj；
+ * 每 10s 复检一次 crashed——进程活着、服务没绑上的状态不会自己恢复，必须回到主循环重绑。
  */
-static int wait_death(int pid)
+static int wait_death(int pid, int restarts)
 {
     struct pollfd pfd;
+    int64_t last_crash_check = now_ms();
+    int64_t last_status = now_ms();
     int fd = (int)syscall(__NR_pidfd_open, pid, 0);
 
     if (fd >= 0) {
@@ -401,11 +438,23 @@ static int wait_death(int pid)
                 return 1;
             }
             set_oom(pid, g_oom);
+            if (now_ms() - last_status >= STATUS_REFRESH_MS) {
+                last_status = now_ms();
+                write_status("alive", pid, restarts);
+            }
+            if (now_ms() - last_crash_check >= ALIVE_CRASH_CHECK_MS) {
+                last_crash_check = now_ms();
+                if (service_crashed()) {
+                    trace("service crashed while process %d alive", pid);
+                    close(fd);
+                    return 2;
+                }
+            }
         }
         close(fd);
         return 0;
     }
-    /* 内核不支持 pidfd：退成 200ms 存在性检查，仍带 5s 的 oom 重刷 */
+    /* 内核不支持 pidfd：退成 200ms 存在性检查，仍带 1s 的 oom 重刷 */
     trace("pidfd_open(%d) failed: %s, fall back to 200ms check", pid, strerror(errno));
     {
         int64_t last_assert = now_ms();
@@ -416,6 +465,17 @@ static int wait_death(int pid)
             if (now_ms() - last_assert >= ASSERT_INTERVAL_MS) {
                 set_oom(pid, g_oom);
                 last_assert = now_ms();
+                if (now_ms() - last_status >= STATUS_REFRESH_MS) {
+                    last_status = now_ms();
+                    write_status("alive", pid, restarts);
+                }
+                if (now_ms() - last_crash_check >= ALIVE_CRASH_CHECK_MS) {
+                    last_crash_check = now_ms();
+                    if (service_crashed()) {
+                        trace("service crashed while process %d alive", pid);
+                        return 2;
+                    }
+                }
             }
         }
         return 0;
@@ -486,7 +546,8 @@ int main(int argc, char **argv)
     int engine = 0;
     int restarts = 0;
     int rebind_rc = 0;
-    int64_t last_relaunch = 0;
+    int64_t last_rebind = 0;
+    int64_t last_restart = 0;
     int64_t started;
 
     if (parse_args(argc, argv) != 0) {
@@ -511,6 +572,7 @@ int main(int argc, char **argv)
 
     while (!g_quit) {
         int crashed;
+        int why;
 
         if (engine > 0 && !pid_alive(engine)) {
             trace("engine pid=%d gone", engine);
@@ -526,18 +588,52 @@ int main(int argc, char **argv)
             set_oom(engine, g_oom);
             write_status("alive", engine, restarts);
             trace("watching engine pid=%d", engine);
-            wait_death(engine);
-            continue;
+            why = wait_death(engine, restarts);
+            if (g_quit)
+                break;
+            if (why == 2) {
+                /* 进程活着、服务被记成 crashed：下一轮走重绑，别再等进程退出 */
+                crashed = 1;
+            } else {
+                continue;
+            }
         }
         /*
-         * 没进程，或者有进程但服务没绑上：都算要拉一次服务。
-         * 两次拉最少隔 10 分钟（他钉的口径：守护不能高频拉服务）。重绑动的是三家共享的
+         * 进程没了、服务没坏：先 am start。它不碰三家共享的无障碍名单，
+         * 闸门只有 10s；清理器连杀时也能秒级拉回来。
+         * 服务真 crashed 时不走这条：起界面清不掉 crashed 集合，只会白等。
+         */
+        if (engine <= 0 && !crashed && g_launch[0] != '\0') {
+            if (last_restart != 0 && now_ms() - last_restart < RESTART_GATE_MS) {
+                nap_until(last_restart + RESTART_GATE_MS);
+                if (g_quit)
+                    break;
+                engine = find_pid();
+                if (engine > 0 && !service_crashed())
+                    continue;
+            }
+            last_restart = now_ms();
+            started = now_ms();
+            trace("engine gone, am start first");
+            launch_app();
+            engine = wait_ok(RESTART_WAIT_MS, 0);
+            if (engine > 0) {
+                restarts++;
+                trace("engine back by am start pid=%d in %lldms",
+                      engine, (long long)(now_ms() - started));
+                continue;
+            }
+            /* am start 没拉起来：落回重绑，等十分钟的那道闸门在下面 */
+        }
+        /*
+         * 没进程且有故障态，或者 am start 也拉不回来：才动无障碍名单。
+         * 两次重绑最少隔 10 分钟（他钉的口径：守护不能高频拉服务）。重绑动的是三家共享的
          * 无障碍名单，拉不起来就一直抖，比等十分钟更坏。
          */
-        if (last_relaunch != 0) {
-            int64_t next = last_relaunch + RELAUNCH_MIN_INTERVAL_MS;
+        if (last_rebind != 0) {
+            int64_t next = last_rebind + RELAUNCH_MIN_INTERVAL_MS;
             if (now_ms() < next) {
-                trace("relaunch gated for %lldms", (long long)(next - now_ms()));
+                trace("rebind gated for %lldms", (long long)(next - now_ms()));
                 nap_until(next);
                 if (g_quit)
                     break;
@@ -553,7 +649,7 @@ int main(int argc, char **argv)
                 }
             }
         }
-        last_relaunch = now_ms();
+        last_rebind = now_ms();
         started = now_ms();
         /* 先自己把开关关掉再打开（无窗口，shell uid 也做得动），等不到才走可见的 am start */
         rebind_rc = rebind_via_list();

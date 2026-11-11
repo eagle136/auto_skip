@@ -84,7 +84,7 @@ class ImageTestActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         RuleStore.init(applicationContext)
-        pendingUri.value = intent?.data
+        pendingUri.value = extractUri(intent)
         setContent {
             SkpTheme {
                 Scaffold(
@@ -107,7 +107,17 @@ class ImageTestActivity : ComponentActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingUri.value = intent.data
+        pendingUri.value = extractUri(intent)
+    }
+
+    private fun extractUri(intent: android.content.Intent?): Uri? {
+        if (intent == null) return null
+        if (intent.action == android.content.Intent.ACTION_SEND) {
+            @Suppress("DEPRECATION")
+            return intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM)
+                ?: intent.clipData?.getItemAt(0)?.uri
+        }
+        return intent.data
     }
 }
 
@@ -180,8 +190,17 @@ private fun TestScreen(initialUri: Uri? = null, modifier: Modifier = Modifier) {
 
     LaunchedEffect(initialUri) { if (initialUri != null) startScan(initialUri) }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) startScan(uri) else status = "已取消选图"
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            startScan(uri)
+        } else {
+            status = "已取消选图"
+        }
     }
 
     Column(
@@ -200,7 +219,7 @@ private fun TestScreen(initialUri: Uri? = null, modifier: Modifier = Modifier) {
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(enabled = !busy, onClick = { picker.launch("image/*") }) {
+            OutlinedButton(enabled = !busy, onClick = { picker.launch(arrayOf("image/*")) }) {
                 Text(if (busy) "扫描中…" else "选择图片")
             }
             /*

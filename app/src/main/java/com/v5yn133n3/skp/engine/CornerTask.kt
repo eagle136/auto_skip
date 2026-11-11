@@ -104,27 +104,9 @@ class CornerTask(
      */
     fun retargetTo(next: String, evtTime: Long, winId: Int = -1) {
         if (next != pkgTarget) {
-            eventTime = evtTime
             pkgTarget = next
-            /*
-             * 计时起点 = **事件产生那一刻**（2026-10-30 23:32 改）。
-             *
-             * 原来写的是 `SystemClock.uptimeMillis()` —— 那是「服务处理这件事的时刻」，
-             * 比真实切换晚了「事件投递 + 主线程排队」。三条通道并发之后这个差值不能忽略：
-             * 无障碍事件可能晚到几百毫秒，若从「我们现在才知道」起算，设定 4 秒实际会
-             * 扫到切换后 4.3 秒，广告那边已经过去一截。
-             * 用 evtTime 之后，timer-reset 的 lag 就是**真实的可观测延迟**，能直接验收
-             * 「触发时计时器是否立即重置」。
-             *
-             * 只在合理范围内采信：ELF / watchdog 给的是 now，异常重启可能给 0，
-             * 超过 2s 说明是一条迟到的旧事件，别拿它把计时器往回拨太多。
-             */
-            val now = SystemClock.uptimeMillis()
-            pkgChangedAt = if (evtTime in 1..now && now - evtTime <= 2_000) evtTime else now
             lastWinId = winId
-            rearmCount = 0
-            rearmWindowAt = 0L
-            session++
+            restartRound(evtTime)
             return
         }
         // **只认包名**（用户 2026-10-30 20:16 定的口径）：
@@ -132,6 +114,34 @@ class CornerTask(
         // 广告盖上来）一律不重置计时、不重扫。好处是行为可预测 —— 设 4 秒就扫 4 秒，
         // 不会被窗口事件偷偷延期。代价是同包内晚出现的插屏不在这 4 秒里，
         // 要它回来只需把下面两行 tryRearm 恢复。
+        //
+        // 例外：**息屏后亮屏解锁**由 SkipService 显式调 [restartRound]，同包也重起一轮。
+        // 解锁那一下应用常会重新弹一次开屏（摇一摇），走窗口事件这条路会被上面这段挡死。
+    }
+
+    /**
+     * 重新起算一轮：换目标应用、息屏后亮屏解锁（同一个包）都走这里。
+     * 扫描线程在下一拍看到 session 变了就重置本轮状态（含帧数配额）。
+     *
+     * 计时起点 = **事件产生那一刻**（2026-10-30 23:32 改）。
+     *
+     * 原来写的是 `SystemClock.uptimeMillis()` —— 那是「服务处理这件事的时刻」，
+     * 比真实切换晚了「事件投递 + 主线程排队」。三条通道并发之后这个差值不能忽略：
+     * 无障碍事件可能晚到几百毫秒，若从「我们现在才知道」起算，设定 4 秒实际会
+     * 扫到切换后 4.3 秒，广告那边已经过去一截。
+     * 用 evtTime 之后，timer-reset 的 lag 就是**真实的可观测延迟**，能直接验收
+     * 「触发时计时器是否立即重置」。
+     *
+     * 只在合理范围内采信：ELF / watchdog 给的是 now，异常重启可能给 0，
+     * 超过 2s 说明是一条迟到的旧事件，别拿它把计时器往回拨太多。
+     */
+    fun restartRound(evtTime: Long) {
+        eventTime = evtTime
+        val now = SystemClock.uptimeMillis()
+        pkgChangedAt = if (evtTime in 1..now && now - evtTime <= 2_000) evtTime else now
+        rearmCount = 0
+        rearmWindowAt = 0L
+        session++
     }
 
     /**
@@ -254,6 +264,10 @@ class CornerTask(
         val scratch = CornerScan.Scratch(BandScan.TW * BandScan.TH)
 
         var frames = 0
+        // 本轮已截帧数，对着识别次数配额（[K.CORNER_SCAN_FRAMES]）判收手。
+        // 与 frames 分开记：frames 是整段任务的累计值，CornerStats 的「ms/帧」拿它当分母，
+        // 每轮清零会把累计耗时除以本轮帧数，算出假的平均值。
+        var roundFrames = 0
         var capMs = 0L
         var scanMs = 0L
         var modelMs = 0L
@@ -265,6 +279,14 @@ class CornerTask(
         var hitCount = 0
         var lastHitAt = 0L
         var lastScanAt = 0L
+        // 上一帧「截图 + 识别」的总耗时：决定下一帧间隔，也决定这一轮点几次。
+        var lastFrameMs = 0L
+        // 慢帧（>1s）这一轮只允许点一次；快帧按窗口连续点（同位置仍受冷却保护）。
+        fun clickLimit(): Int =
+            if (lastFrameMs > K.CORNER_FRAME_SLOW_MS) K.CORNER_CLICKS_ONCE else K.CORNER_MAX_CLICKS
+        // 已经用 shell 补过刀的坐标（-1 = 没有）。同一颗按钮只补一次。
+        var deadRetryX = -1
+        var deadRetryY = -1
         var nodeHoldUntil = 0L
         var capFail = 0
         // 被实心块闸门丢掉的候选数，随 miss 日志一起打：它高说明这一屏全是头像/图标，
@@ -296,11 +318,13 @@ class CornerTask(
             } else 0
         }
         refreshTopGuards()
-        // 本次会话的识别时长（首页滑条 4–10s），高频档按时长比例算
+        // 本次会话的识别时长（首页滑条 4–10s，默认 4s），高频档按时长比例算
         var timeoutMs = RuleStore.cornerTimeoutMs
-        // 触发延迟（首页滑条 0–2s，默认 0 = 不等）：检测到切换后先等一等再截图。
-        // 切应用那一瞬截到的多是上一屏残留/占位图，但事件本身已经晚 ~570ms，
-        // 再等只会把「看到广告」变成「广告播完了」。
+        // 本轮帧数配额（首页滑条 1–10，默认 1）。和时长一样每轮起算时现读一次。
+        var maxFrames = RuleStore.cornerScanFrames
+        // 触发延迟（首页滑条 0–2s，默认 0.5s）：检测到切换后先等一等再截图。
+        // 切应用那一瞬截到的多是上一屏残留/占位图。识别次数默认 1 帧时这一等尤其关键：
+        // 那一帧是整轮唯一的一帧，截早了拿到占位图就等于整轮白跑。
         var delayMs = RuleStore.cornerStartDelayMs.toLong()
         // 扫描起点 = 触发时刻 + 延迟。识别时长从这里开始算，
         // **不算**延迟 —— 4s 档就是在延迟之后实打实扫 4s。
@@ -343,8 +367,9 @@ class CornerTask(
                     }
                     Logs.i(SkipService.TAG,
                         "timer-reset kind=CORNER pkg=$pkg lag=${nowAt - start}ms")
-                    // 换应用时重读一次滑条值：用户可能刚在首页把 4s 调成 10s
+                    // 换应用 / 解锁重起时重读一次滑条值：用户可能刚在首页改过
                     timeoutMs = RuleStore.cornerTimeoutMs
+                    maxFrames = RuleStore.cornerScanFrames
                     delayMs = RuleStore.cornerStartDelayMs.toLong()
                     scanStart = start + delayMs
                     lastMotion = 0
@@ -359,10 +384,13 @@ class CornerTask(
                     pausedBy = null
                     capFail = 0
                     idle = false
+                    // 新一轮 = 新的帧数配额；lastScanAt 清零保证这一轮的首帧不被上一轮的间隔节流
+                    roundFrames = 0
+                    lastScanAt = 0
                     svc.resetWindowHit()
                     Logs.i(SkipService.TAG,
                         "switch-to kind=CORNER pkg=$pkg session=$session timeout=${timeoutMs}ms " +
-                            "delay=${delayMs}ms")
+                            "delay=${delayMs}ms frames=$maxFrames")
                 }
                 // ①-b **不再有「同包换窗口 → 重新起算」**。应用内切页面、软键盘弹收都会发
                 //      窗口事件，逐条重置会让用户每点一次页面就重扫一轮；现在只认包名变化。
@@ -397,12 +425,17 @@ class CornerTask(
                         val byIme = by != null && RuleStore.isIme(by)
                         pausedBy = null
                         if (!byIme) {
-                            // 桌面/其他应用回来 = 新一轮：计时和触发延迟都重算
+                            // 桌面/其他应用回来 = 新一轮：计时、延迟、帧数配额都重算
                             start = SystemClock.uptimeMillis()
+                            timeoutMs = RuleStore.cornerTimeoutMs
+                            maxFrames = RuleStore.cornerScanFrames
+                            delayMs = RuleStore.cornerStartDelayMs.toLong()
                             scanStart = start + delayMs
+                            roundFrames = 0
+                            lastScanAt = 0
                             idle = false
                             Logs.i(SkipService.TAG,
-                                "resume kind=CORNER pkg=$pkg wasPausedBy=$by")
+                                "resume kind=CORNER pkg=$pkg wasPausedBy=$by frames=$maxFrames")
                         }
                     }
                 }
@@ -446,15 +479,23 @@ class CornerTask(
                 // **严格等于设定值**：到点就停手，不续期、不偷偷延长。上一版加过
                 // 12s 慢扫尾段，用户设 6s 实际扫 18s —— 调什么值都一样，等于设定失效。
                 val elapsedNow = SystemClock.uptimeMillis() - scanStart
-                val clickedEnough = hitCount >= K.CORNER_MAX_CLICKS
-                if (elapsedNow > timeoutMs || clickedEnough) {
+                val clickedEnough = hitCount >= clickLimit()
+                // 识别次数用完：默认 1 帧时这里就是整轮的收手点，时长闸基本碰不到。
+                // 收手后留在空转态（不退出任务），亮屏解锁 / 换应用才能立刻再给一轮。
+                val framesEnough = roundFrames >= maxFrames
+                if (elapsedNow > timeoutMs || clickedEnough || framesEnough) {
                     if (reason != "idle-timeout") {
                         reason = "idle-timeout"
                         Logs.i(SkipService.TAG,
                             "idle kind=CORNER pkg=$pkg frames=$frames hits=$hitCount " +
                                 "elapsed=${elapsedNow}ms limit=${timeoutMs}ms " +
+                                "shots=$roundFrames/$maxFrames " +
                                 "best=${String.format("%.2f", GlyphScan.lastBest)} " +
-                                "why=${if (clickedEnough) "clicked" else "timeout"}")
+                                "why=${when {
+                                    clickedEnough -> "clicked"
+                                    framesEnough -> "frames"
+                                    else -> "timeout"
+                                }}")
                         // 最后一帧的框必须撤掉：留着会让人以为「还在扫」
                         if (canDraw) DebugOverlay.hide()
                     }
@@ -519,13 +560,14 @@ class CornerTask(
                 }
                 capFail = 0
                 frames++
+                roundFrames++
                 if (canDraw) marks.clear()
 
-                // 测试版口径：1s 内最多识别 1 次。首帧不节流（切应用要立刻出结果）。
+                // 运行间隔由首页滑条决定（800–2000ms），首帧不节流。
                 // 放在两条路分叉之前，glyph 分支的 continue 也绕不过它。
                 if (frames > 1) {
-                    val gap = K.MIN_SCAN_INTERVAL_MS - (SystemClock.uptimeMillis() - lastScanAt)
-                    if (gap > 0) sleep(gap)
+                    val gap = RuleStore.cornerScanGapMs - (SystemClock.uptimeMillis() - lastScanAt)
+                    if (gap > 0) sleep(gap.toLong())
                 }
                 lastScanAt = SystemClock.uptimeMillis()
 
@@ -543,6 +585,9 @@ class CornerTask(
                  */
                 if (useGlyph) {
                     val gh = GlyphScan.scan(ctx, frame)
+                    // 本帧成本 = 截图 + 识别。下一帧的间隔和本轮点击上限都由它决定，
+                    // 所以必须在下面任何一个 continue 之前落地。
+                    lastFrameMs = cap1 + (SystemClock.uptimeMillis() - tScan)
                     scanMs += SystemClock.uptimeMillis() - tScan
                     if (gh == null) {
                         continue
@@ -550,8 +595,27 @@ class CornerTask(
                     val gw = gh.x1 - gh.x0
                     val ghh = gh.y1 - gh.y0
                     if (recentlyClicked(clicks, gh.x0, gh.y0, gw, ghh)) {
+                        /*
+                         * 这颗按钮刚点过却还在画面上 → 上一发没被应用接受。
+                         * 无障碍注入（dispatchGesture）在部分广告 SDK / WebView 上会被吞，
+                         * 这时用 InputManager 的 `input tap` 同坐标补一发（要 Root 或 Shizuku）。
+                         * 每颗按钮最多补一次：补完还不动就是误报或不可点区域，继续补只会
+                         * 打到别的热区上。
+                         */
+                        if (mode != Mode.NONE && (gh.cx != deadRetryX || gh.cy != deadRetryY)) {
+                            val r = Shell.run("input tap ${gh.cx} ${gh.cy}", mode, 1_500)
+                            deadRetryX = gh.cx
+                            deadRetryY = gh.cy
+                            Logs.w(
+                                SkipService.TAG,
+                                "tapretry kind=CORNER pkg=$pkg at=${gh.cx},${gh.cy} " +
+                                    "shell=${if (r.ok) "ok" else "fail:${r.out.take(40)}"}",
+                            )
+                        }
                         continue
                     }
+                    deadRetryX = -1
+                    deadRetryY = -1
                     // 同上：OCR 模式没有节点路可让，这里直接判等会白退一次任务
                     if (RuleStore.scanMode != K.SCAN_MODE_OCR && svc.nodeHitRecently()) break
                     val gGate = CornerScan.gate(frame.width, frame.height, gh.cx, gh.cy)
@@ -596,7 +660,14 @@ class CornerTask(
                             "combo=${String.format("%.3f", gh.combo)} fg=${curFg ?: "null"}",
                     )
                     lastNap = nap()
-                    svc.gestureTap(gh.cx, gh.cy)
+                    val tapped = svc.gestureTap(gh.cx, gh.cy)
+                    clicks.add(
+                        longArrayOf(
+                            gh.x0.toLong(), gh.y0.toLong(),
+                            gh.x1.toLong(), gh.y1.toLong(),
+                            SystemClock.uptimeMillis(),
+                        ),
+                    )
                     hitCount++
                     hit = true
                     lastHitAt = SystemClock.uptimeMillis()
@@ -608,10 +679,15 @@ class CornerTask(
                             "combo=${String.format("%.3f", gh.combo)} " +
                             "跳=${String.format("%.3f", gh.tiao)} " +
                             "过=${String.format("%.3f", gh.guo)} pass=${gh.pass} " +
-                            "ms=${gh.ms} frames=$frames",
+                            "tap=${if (tapped) "gesture" else "inject-fail"} " +
+                            "n=$hitCount frame=${lastFrameMs}ms frames=$frames",
                     )
-                    reason = "clicked"
-                    break
+                    if (hitCount >= clickLimit()) {
+                        reason = "clicked"
+                        break
+                    }
+                    // 还在窗口内：继续认、继续点（同位置受冷却保护）。
+                    continue
                 }
                 val halfW = frame.width / BandScan.SCALE
                 val halfH = frame.height / BandScan.SCALE
@@ -900,6 +976,7 @@ class CornerTask(
                 scanMs += SystemClock.uptimeMillis() - tScan - frameModelMs
 
                 val frameMs = SystemClock.uptimeMillis() - frameStart
+                lastFrameMs = frameMs
                 if (frameMs > maxFrameMs) maxFrameMs = frameMs
                 // 每 5 帧一条心跳：把「已经扫了多久 / 截止在哪 / 画面动没动 / 这帧多慢」
                 // 一次打全。用户报「广告快播完才动」时，看这条就知道是收工了还是没框到。
@@ -924,7 +1001,7 @@ class CornerTask(
                 }
                 // 高频档不额外等待（截图 170ms 本身就是限速）；低频档 1.2s 一帧。
                 if (!fast) sleep(K.CORNER_SLOW_GAP_MS)
-                if (hitCount >= K.CORNER_MAX_CLICKS) {
+                if (hitCount >= clickLimit()) {
                     // **点生效了就立刻收工**：不歇、不清零、不续扫。以前这里是
                     // sleep(3000) + 清零重来，等于「设 4s 实际扫 7.5s」，而且清零让
                     // idle 日志永远 hits=0，看起来像「压根没点过」。下一次弹窗由窗口
